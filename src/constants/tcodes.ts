@@ -465,5 +465,24 @@ export const TCODES: TCodeInfo[] = [
     actionType: 'Manage',
     roleAssociation: 'ALL_USERS',
     description: 'Safely terminate active DMS operator session and return to login portal.'
+  },
+  {
+    module: 'AI & Inquiries',
+    parentModule: 'Transactions',
+    tCode: 'AI01',
+    transactionName: 'AI Inquiry Desk & Automated Bot',
+    actionType: 'Manage',
+    roleAssociation: 'ALL_USERS',
+    description: 'Automated 24/7 inquiry resolution for customer ledgers, order tracking, prices, and dispatch.'
+  },
+  {
+    module: 'AI & Inquiries',
+    parentModule: 'Reports',
+    tCode: 'INQ01',
+    transactionName: 'AI Inquiry Telemetry & Audit Logs',
+    actionType: 'Report',
+    roleAssociation: 'ALL_USERS',
+    description: 'Real-time telemetry and audit logs of automated customer inquiries.'
   }
 ];
+

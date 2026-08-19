@@ -451,3 +451,41 @@ export interface PurchaseReturnItem {
   reason?: string;
 }
 
+export interface AIInquiryLog {
+  id: number;
+  sender_type: 'customer' | 'sales_rep' | 'internal';
+  sender_name?: string;
+  sender_phone?: string;
+  shop_id?: number;
+  shop_name?: string;
+  channel: 'web_chat' | 'whatsapp' | 'voice' | 'sms';
+  incoming_message: string;
+  detected_intent: string;
+  ai_response: string;
+  tool_calls_executed?: string;
+  response_time_ms: number;
+  status: 'auto_resolved' | 'escalated';
+  escalation_notes?: string;
+  feedback_rating?: number;
+  created_at: string;
+}
+
+export interface AIInquiryRule {
+  id: number;
+  keyword_pattern: string;
+  intent_category: string;
+  quick_template: string;
+  is_active: number;
+  created_at?: string;
+}
+
+export interface AIInquiryStats {
+  total_inquiries: number;
+  auto_resolved: number;
+  escalated: number;
+  avg_response_time_ms: number;
+  intents_breakdown: { intent: string; count: number }[];
+  channels_breakdown: { channel: string; count: number }[];
+}
+
+

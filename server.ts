@@ -7,6 +7,7 @@ import morgan from "morgan";
 import Database from "better-sqlite3";
 import multer from "multer";
 import { fileURLToPath } from "url";
+import { initAIInquiryTables, processInquiry } from "./server/aiInquiry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -764,7 +765,9 @@ try {
 
       // Admin & Security
       { tcode: 'USR1', transaction_name: 'User & Security Management', module: 'System Administration', parent_module: 'Admin', action_type: 'Manage', description: 'Maintain login credentials, roles, and distributor scopes.' },
-      { tcode: 'TC01', transaction_name: 'T-Code Dictionary & Directory', module: 'System Administration', parent_module: 'Admin', action_type: 'Display', description: 'SAP-style transaction code catalog and command helper.' }
+      { tcode: 'TC01', transaction_name: 'T-Code Dictionary & Directory', module: 'System Administration', parent_module: 'Admin', action_type: 'Display', description: 'SAP-style transaction code catalog and command helper.' },
+      { tcode: 'AI01', transaction_name: 'AI Inquiry Desk & Automated Bot', module: 'Customer & Rep Service', parent_module: 'Transactions', action_type: 'Manage', description: 'Automated 24/7 inquiry resolution for customer ledgers, order tracking, prices, and dispatch.' },
+      { tcode: 'INQ01', transaction_name: 'AI Inquiry Telemetry & Audit Logs', module: 'Customer & Rep Service', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Real-time telemetry and audit logs of automated customer inquiries.' }
     ];
 
     const insertTCode = db.prepare(`
@@ -775,6 +778,9 @@ try {
     for (const tc of defaultTCodes) {
       insertTCode.run(tc.tcode, tc.transaction_name, tc.module, tc.parent_module, tc.action_type, tc.description);
     }
+
+    // Initialize AI Inquiry Tables and Policies
+    initAIInquiryTables(db);
   } catch (e) {
     console.error("TCode info seeding error:", e);
   }
@@ -1472,7 +1478,7 @@ try {
 function seedAreaWiseReportData() {
   try {
     // 1. Ensure material group '00001' exists
-    db.prepare("INSERT OR IGNORE INTO material_groups (id, name, description) VALUES (?, ?, ?)").run("00001", "Sugar & Sweeteners", "Sweetening agents");
+    db.prepare("INSERT OR IGNORE INTO material_groups (mat_gp, mat_description) VALUES (?, ?)").run("00001", "Sugar & Sweeteners");
 
     // 2. Ensure products exist
     const productsToSeed = [
@@ -5872,6 +5878,179 @@ async function startServer() {
       if (fs.existsSync(tempPath)) {
         try { fs.unlinkSync(tempPath); } catch(e) {}
       }
+    }
+  });
+
+  // ==========================================
+  // Automated AI Inquiry Desk API Routes
+  // ==========================================
+
+  // Process incoming customer / rep inquiry
+  app.post("/api/ai/inquiry", async (req, res) => {
+    try {
+      const { incoming_message, sender_type, sender_name, sender_phone, shop_id, channel } = req.body;
+      if (!incoming_message || incoming_message.trim() === '') {
+        return res.status(400).json({ error: "Missing incoming_message parameter." });
+      }
+
+      const result = await processInquiry({
+        incoming_message,
+        sender_type,
+        sender_name,
+        sender_phone,
+        shop_id,
+        channel
+      }, db);
+
+      res.json(result);
+    } catch (err: any) {
+      console.error("[API /api/ai/inquiry error]", err);
+      res.status(500).json({ error: err.message || "Failed to process AI inquiry." });
+    }
+  });
+
+  // Get audit telemetry logs
+  app.get("/api/ai/logs", (req, res) => {
+    try {
+      const limit = Number(req.query.limit) || 100;
+      const logs = db.prepare(`
+        SELECT l.*, s.shop_name 
+        FROM ai_inquiry_logs l
+        LEFT JOIN shops s ON l.shop_id = s.id
+        ORDER BY l.id DESC
+        LIMIT ?
+      `).all(limit);
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get aggregated stats
+  app.get("/api/ai/stats", (req, res) => {
+    try {
+      const total = (db.prepare("SELECT COUNT(*) as c FROM ai_inquiry_logs").get() as any)?.c || 0;
+      const autoResolved = (db.prepare("SELECT COUNT(*) as c FROM ai_inquiry_logs WHERE status = 'auto_resolved'").get() as any)?.c || 0;
+      const escalated = (db.prepare("SELECT COUNT(*) as c FROM ai_inquiry_logs WHERE status = 'escalated'").get() as any)?.c || 0;
+      const avgTime = (db.prepare("SELECT AVG(response_time_ms) as a FROM ai_inquiry_logs").get() as any)?.a || 0;
+
+      const intents = db.prepare(`
+        SELECT detected_intent as intent, COUNT(*) as count 
+        FROM ai_inquiry_logs 
+        WHERE detected_intent IS NOT NULL
+        GROUP BY detected_intent 
+        ORDER BY count DESC 
+        LIMIT 6
+      `).all();
+
+      const channels = db.prepare(`
+        SELECT channel, COUNT(*) as count 
+        FROM ai_inquiry_logs 
+        GROUP BY channel 
+        ORDER BY count DESC
+      `).all();
+
+      res.json({
+        total_inquiries: total,
+        auto_resolved: autoResolved,
+        escalated: escalated,
+        avg_response_time_ms: Math.round(avgTime),
+        intents_breakdown: intents,
+        channels_breakdown: channels
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get policy rules
+  app.get("/api/ai/rules", (req, res) => {
+    try {
+      const rules = db.prepare("SELECT * FROM ai_inquiry_rules ORDER BY id DESC").all();
+      res.json(rules);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create or update policy rule
+  app.post("/api/ai/rules", (req, res) => {
+    try {
+      const { id, keyword_pattern, intent_category, quick_template, is_active } = req.body;
+      if (!keyword_pattern || !quick_template) {
+        return res.status(400).json({ error: "Missing required fields." });
+      }
+
+      if (id) {
+        db.prepare(`
+          UPDATE ai_inquiry_rules 
+          SET keyword_pattern = ?, intent_category = ?, quick_template = ?, is_active = ?
+          WHERE id = ?
+        `).run(keyword_pattern, intent_category || 'GENERAL', quick_template, is_active !== undefined ? Number(is_active) : 1, id);
+      } else {
+        db.prepare(`
+          INSERT INTO ai_inquiry_rules (keyword_pattern, intent_category, quick_template, is_active)
+          VALUES (?, ?, ?, ?)
+        `).run(keyword_pattern, intent_category || 'GENERAL', quick_template, is_active !== undefined ? Number(is_active) : 1);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete policy rule
+  app.delete("/api/ai/rules/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM ai_inquiry_rules WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Feedback rating
+  app.post("/api/ai/feedback", (req, res) => {
+    try {
+      const { log_id, rating } = req.body;
+      if (log_id) {
+        db.prepare("UPDATE ai_inquiry_logs SET feedback_rating = ? WHERE id = ?").run(rating, log_id);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // External WhatsApp / SMS Webhook
+  app.post("/api/ai/webhook", async (req, res) => {
+    try {
+      const body = req.body;
+      const incomingText = body.Body || body.message || body.text || body.incoming_message || "";
+      const fromPhone = body.From || body.from || body.phone || "";
+      const senderName = body.ProfileName || body.name || "WhatsApp User";
+
+      if (!incomingText) {
+        return res.status(400).json({ error: "No message text found in webhook payload." });
+      }
+
+      const result = await processInquiry({
+        incoming_message: incomingText,
+        sender_type: 'customer',
+        sender_name: senderName,
+        sender_phone: fromPhone,
+        channel: 'whatsapp'
+      }, db);
+
+      // Return Twilio/WhatsApp XML or JSON response
+      res.json({
+        response: result.response,
+        intent: result.detected_intent,
+        status: "success"
+      });
+    } catch (err: any) {
+      console.error("Webhook processing error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
