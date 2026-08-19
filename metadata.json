@@ -1,0 +1,6 @@
+{
+  "name": "Remix: Karachi DMS - FMCG Distribution Management System",
+  "description": "A full-stack Distribution Management System for FMCG distributors in Karachi, featuring inventory tracking, order management, user access control, and shop management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
