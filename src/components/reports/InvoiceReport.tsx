@@ -465,7 +465,14 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
                     const pct = (it.trade_discount_pct || 0) + (it.special_discount_pct || 0);
                     return sum + (gross * pct / 100);
                   }, 0);
-                  const totalNet = invoice.items.reduce((sum, it) => sum + it.net_amount, 0);
+                  const totalNet = invoice.items.reduce((sum, it) => {
+                    const gross = it.quantity * it.unit_price;
+                    const pct = (it.trade_discount_pct || 0) + (it.special_discount_pct || 0);
+                    const disc = gross * pct / 100;
+                    const taxP = (it.tax_pct || 0) + (it.additional_tax_pct || 0);
+                    const tax = gross * taxP / 100;
+                    return sum + (gross - disc + tax);
+                  }, 0);
 
                   return (
                     <div 
@@ -539,6 +546,8 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
                             const itemDiscPct = (item.trade_discount_pct || 0) + (item.special_discount_pct || 0);
                             const itemDiscAmt = itemGross * itemDiscPct / 100;
                             const itemTaxVal = (item.tax_pct || 0) + (item.additional_tax_pct || 0);
+                            const itemTaxAmt = itemGross * itemTaxVal / 100;
+                            const itemNet = itemGross - itemDiscAmt + itemTaxAmt;
 
                             // Format Packing nicely (e.g. Cooking Oil 1L -> 1L / EA, Soap Bar -> EA)
                             let packing = item.uom || 'EA';
@@ -569,16 +578,16 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
                                   {formatAmount(itemGross)}
                                 </td>
                                 <td className="border-r border-black p-1.5 text-right text-black">
-                                  {itemTaxVal}
+                                  {itemTaxAmt > 0 ? formatAmount(itemTaxAmt) : 0}
                                 </td>
                                 <td className="border-r border-black p-1.5 text-right text-black">
-                                  {itemDiscPct}
+                                  {itemDiscPct > 0 ? itemDiscPct : ''}
                                 </td>
                                 <td className="border-r border-black p-1.5 text-right text-black">
                                   {formatAmount(itemDiscAmt)}
                                 </td>
                                 <td className="p-1.5 text-right font-medium text-black">
-                                  {formatAmount(item.net_amount)}
+                                  {formatAmount(itemNet)}
                                 </td>
                               </tr>
                             );

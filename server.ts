@@ -468,6 +468,21 @@ try {
     }
   }
 
+  // Synchronize invoice items and invoice totals to ensure mathematical consistency
+  try {
+    db.exec(`
+      UPDATE invoice_items 
+      SET net_amount = (quantity * unit_price) - ((quantity * unit_price) * (coalesce(trade_discount_pct, 0) + coalesce(special_discount_pct, 0)) / 100) + ((quantity * unit_price) * (coalesce(tax_pct, 0) + coalesce(additional_tax_pct, 0)) / 100)
+      WHERE abs(net_amount - ((quantity * unit_price) - ((quantity * unit_price) * (coalesce(trade_discount_pct, 0) + coalesce(special_discount_pct, 0)) / 100) + ((quantity * unit_price) * (coalesce(tax_pct, 0) + coalesce(additional_tax_pct, 0)) / 100))) > 0.01;
+
+      UPDATE invoices 
+      SET gross_amount = (SELECT coalesce(SUM(quantity * unit_price), invoices.gross_amount) FROM invoice_items WHERE invoice_items.invoice_id = invoices.id),
+          net_amount = (SELECT coalesce(SUM(net_amount), invoices.net_amount) FROM invoice_items WHERE invoice_items.invoice_id = invoices.id);
+    `);
+  } catch (e) {
+    console.warn("Invoice calculations sync migration notice:", e);
+  }
+
   // Sales Return tables
   try {
     db.exec(`

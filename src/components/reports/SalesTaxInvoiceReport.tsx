@@ -463,7 +463,14 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
                     const pct = (it.trade_discount_pct || 0) + (it.special_discount_pct || 0);
                     return sum + (gross * pct / 100);
                   }, 0);
-                  const totalNet = invoice.items.reduce((sum, it) => sum + it.net_amount, 0);
+                  const totalNet = invoice.items.reduce((sum, it) => {
+                    const gross = it.quantity * it.unit_price;
+                    const pct = (it.trade_discount_pct || 0) + (it.special_discount_pct || 0);
+                    const disc = gross * pct / 100;
+                    const taxP = (it.tax_pct || 0) + (it.additional_tax_pct || 0);
+                    const tax = gross * taxP / 100;
+                    return sum + (gross - disc + tax);
+                  }, 0);
                   const tableRows: InvoiceItem[] = invoice.items || [];
 
                   return (
@@ -545,6 +552,9 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
                             const itemGross = item.quantity * item.unit_price;
                             const itemDiscPct = (item.trade_discount_pct || 0) + (item.special_discount_pct || 0);
                             const itemDiscAmt = itemGross * itemDiscPct / 100;
+                            const itemTaxPct = (item.tax_pct || 0) + (item.additional_tax_pct || 0);
+                            const itemTaxAmt = itemGross * itemTaxPct / 100;
+                            const itemNet = itemGross - itemDiscAmt + itemTaxAmt;
 
                             let packing = item.uom || 'EA';
                             if (packing === 'EA') {
@@ -574,16 +584,16 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
                                   {formatAmount(itemGross)}
                                 </td>
                                 <td className="border-r border-black p-1.5 text-right text-black">
-                                  0
+                                  {itemTaxAmt > 0 ? formatAmount(itemTaxAmt) : 0}
                                 </td>
                                 <td className="border-r border-black p-1.5 text-right text-black">
-                                  {/* Disc % is blank in layout rows */}
+                                  {itemDiscPct > 0 ? itemDiscPct : ''}
                                 </td>
                                 <td className="border-r border-black p-1.5 text-right text-black">
                                   {formatAmount(itemDiscAmt)}
                                 </td>
                                 <td className="p-1.5 text-right font-medium text-black">
-                                  {formatAmount(item.net_amount)}
+                                  {formatAmount(itemNet)}
                                 </td>
                               </tr>
                             );
