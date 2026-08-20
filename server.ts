@@ -1905,13 +1905,38 @@ async function startServer() {
 
   // Helper to fetch user roles and permitted TCodes
   const getUserAccessData = (userId: number, baseRole: string) => {
-    const assignedRoles = db.prepare(`
+    let assignedRoles = db.prepare(`
       SELECT r.id, r.name, r.description 
       FROM roles r
       JOIN user_roles ur ON ur.role_id = r.id
       WHERE ur.user_id = ?
       ORDER BY r.id ASC
     `).all(userId) as { id: number; name: string; description?: string }[];
+
+    // If no explicit role mapped yet, assign standard default based on user's base role
+    if (assignedRoles.length === 0) {
+      let defaultRoleId = 4; // DELIVERY_MAN / Salesman
+      const normRole = (baseRole || '').toLowerCase().trim();
+      if (normRole === 'admin' || normRole === 'super_admin') defaultRoleId = 1;
+      else if (normRole === 'sales_manager') defaultRoleId = 2;
+      else if (normRole === 'order_booker') defaultRoleId = 3;
+      else if (normRole === 'delivery_man' || normRole === 'salesman' || normRole === 'driver') defaultRoleId = 4;
+      else if (normRole === 'inventory' || normRole === 'inventory_controller') defaultRoleId = 5;
+      else if (normRole === 'accountant' || normRole === 'auditor' || normRole === 'accounts_auditor') defaultRoleId = 6;
+
+      try {
+        db.prepare("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)").run(userId, defaultRoleId);
+        assignedRoles = db.prepare(`
+          SELECT r.id, r.name, r.description 
+          FROM roles r
+          JOIN user_roles ur ON ur.role_id = r.id
+          WHERE ur.user_id = ?
+          ORDER BY r.id ASC
+        `).all(userId) as { id: number; name: string; description?: string }[];
+      } catch (e) {
+        console.warn("Auto user_roles assign fallback error:", e);
+      }
+    }
 
     const roleNames = assignedRoles.map(r => r.name);
     const roleIds = assignedRoles.map(r => r.id);

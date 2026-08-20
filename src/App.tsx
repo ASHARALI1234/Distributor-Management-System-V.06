@@ -46,7 +46,9 @@ import {
   Upload,
   AlertCircle,
   Check,
-  ArrowLeft
+  ArrowLeft,
+  Bot,
+  ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -122,6 +124,7 @@ import { InvoiceReport } from './components/reports/InvoiceReport';
 import { SalesTaxInvoiceReport } from './components/reports/SalesTaxInvoiceReport';
 import { StockDetailReport } from './components/reports/StockDetailReport';
 import { AdminTab } from './components/AdminTab';
+import { AIInquiryDesk } from './components/AIInquiryDesk';
 
 const OrderCancellationScreen = ({ onClose, orders, formatPKR }: { onClose: () => void, orders: Order[], formatPKR: (amt: number) => string }) => {
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
@@ -502,14 +505,14 @@ const FilterBar = ({
 // --- Main App ---
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'transactions' | 'master_data' | 'reports' | 'admin'>(
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'transactions' | 'master_data' | 'reports' | 'ai_inquiry' | 'admin'>(
     (localStorage.getItem('dms_activeTab') as any) || 'dashboard'
   );
-  const [masterDataSubTab, setMasterDataSubTab] = useState<'products' | 'shops' | 'suppliers' | 'order_bookers' | 'salesmen' | 'drivers' | 'locations' | 'distributors'>(
+  const [masterDataSubTab, setMasterDataSubTab] = useState<'products' | 'shops' | 'suppliers' | 'order_bookers' | 'salesmen' | 'drivers' | 'locations' | 'distributors' | 'units'>(
     (localStorage.getItem('dms_masterDataSubTab') as any) || 'products'
   );
   const [transactionsSubTab, setTransactionsSubTab] = useState<'purchases' | 'orders' | 'deliveries' | 'delivery_returns' | 'load_plans' | 'invoices' | 'sales_returns'>(
-    (localStorage.getItem('dms_transactionsSubTab') as any) || 'purchases'
+    (localStorage.getItem('dms_transactionsSubTab') as any) || 'orders'
   );
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [distributors, setDistributors] = useState<Distributor[]>([]);
@@ -555,11 +558,116 @@ export default function App() {
       typeof r === 'string' ? r === 'SUPER_ADMIN' : r?.name === 'SUPER_ADMIN'
     ));
 
+  // Granular T-Code and RBAC Authorization Helpers
+  const hasTCode = (tcode: string): boolean => {
+    if (!currentUser) return false;
+    if (isSuperAdmin) return true;
+    const userCodes = currentUser.permitted_tcodes || [];
+    return userCodes.some(c => c.toUpperCase() === tcode.toUpperCase());
+  };
+
+  const hasAnyTCode = (...tcodes: string[]): boolean => {
+    if (!currentUser) return false;
+    if (isSuperAdmin) return true;
+    const userCodes = currentUser.permitted_tcodes || [];
+    const upperUserCodes = userCodes.map(c => c.toUpperCase());
+    return tcodes.some(c => upperUserCodes.includes(c.toUpperCase()));
+  };
+
+  // Top-Level Module Authorization
+  const canAccessMasterData = isSuperAdmin || hasAnyTCode(
+    'DST01', 'DIS01', 'DM01', 'SLM1', 'SM01', 'SM05', 'SM07', 'SM08',
+    'PR01', 'PR02', 'PR03', 'MM01', 'MM02', 'MM03', 'IN01', 'IN05',
+    'SH01', 'SH05', 'SH07', 'SH08', 'SHM1', 'VD01', 'VD02', 'VD03', 'BP01',
+    'XK01', 'XK02', 'XK03', 'SUM1', 'SU01', 'SU05', 'SU07', 'SU08',
+    'OBM1', 'OB01', 'OB02', 'OB05', 'DRV1', 'LOC01', 'GEO01', 'UN01', 'UOM01'
+  );
+
+  const canAccessTransactions = isSuperAdmin || hasAnyTCode(
+    'ME21N', 'ME03', 'PUR01', 'PUR02', 'VA01', 'VA02', 'VA03', 'OR01', 'OR05', 'ORD02',
+    'DLVY', 'DL01', 'DL05', 'VL03', 'DEL01', 'DEL02', 'RT01', 'PGR01', 'DRT01',
+    'INV01', 'VF01', 'VF02', 'VF03', 'STI01', 'SRT01', 'PRT01', 'LP01', 'LPR01'
+  );
+
+  const canAccessReports = isSuperAdmin || hasAnyTCode(
+    'APS01', 'LPR01', 'SDR01', 'REPT', 'VF03', 'STI01', 'MB52', 'MB51', 'FBL5N'
+  );
+
+  const canAccessAI = isSuperAdmin || hasAnyTCode('AI01', 'INQ01', 'DASH');
+
+  const canAccessAdmin = isSuperAdmin || hasAnyTCode('USR1', 'SU01', 'SU05', 'SU07', 'SU08', 'SUM1');
+
+  // Master Data subtabs filtered strictly by user authorizations
+  const masterDataTabDefs = [
+    { id: 'distributors', label: 'Distributors', icon: Store, tcodes: ['DST01', 'DIS01', 'DM01'] },
+    { id: 'suppliers', label: 'Suppliers', icon: Factory, tcodes: ['XK01', 'XK02', 'XK03', 'SUM1', 'SU01', 'SU05', 'SU07', 'SU08'] },
+    { id: 'shops', label: 'Shops', icon: Store, tcodes: ['SH01', 'SH05', 'SH07', 'SH08', 'SHM1', 'VD01', 'VD02', 'VD03', 'BP01'] },
+    { id: 'order_bookers', label: 'Order Bookers', icon: Users, tcodes: ['OBM1', 'OB01', 'OB02', 'OB05'] },
+    { id: 'salesmen', label: 'Salesmen', icon: Users, tcodes: ['SLM1', 'SM01', 'SM05', 'SM07', 'SM08'] },
+    { id: 'products', label: 'Products', icon: Package, tcodes: ['PR01', 'PR02', 'PR03', 'MM01', 'MM02', 'MM03', 'IN01', 'IN05'] },
+    { id: 'locations', label: 'Locations', icon: MapPin, tcodes: ['LOC01', 'GEO01'] },
+    { id: 'units', label: 'Units', icon: Settings, tcodes: ['UN01', 'UOM01'] },
+  ];
+
+  const allowedMasterDataTabs = masterDataTabDefs.filter(tab => hasAnyTCode(...tab.tcodes));
+
+  // Transactions subtabs filtered strictly by user authorizations
+  const transactionTabDefs = [
+    { id: 'purchases', label: 'Purchases', icon: ShoppingBag, tcodes: ['ME21N', 'ME03', 'PUR01', 'PUR02'] },
+    { id: 'orders', label: 'Orders', icon: ShoppingCart, tcodes: ['VA01', 'VA02', 'VA03', 'OR01', 'OR05', 'ORD02'] },
+    { id: 'deliveries', label: 'Deliveries', icon: Truck, tcodes: ['DLVY', 'DL01', 'DL05', 'VL03', 'DEL01', 'DEL02'] },
+    { id: 'delivery_returns', label: 'Delivery Return', icon: RotateCcw, tcodes: ['RT01', 'PGR01', 'DRT01', 'DL05'] },
+    { id: 'invoices', label: 'Invoices', icon: FileText, tcodes: ['INV01', 'VF01', 'VF02', 'VF03', 'STI01'] },
+    { id: 'sales_returns', label: 'Sales Return', icon: RotateCcw, tcodes: ['SRT01', 'RT01'] },
+    { id: 'load_plans', label: 'Load Plans', icon: Truck, tcodes: ['LP01', 'LPR01'] },
+  ];
+
+  const allowedTransactionTabs = transactionTabDefs.filter(tab => hasAnyTCode(...tab.tcodes));
+
+  // Reports filtered strictly by user authorizations
+  const allReportsList = [
+    { title: 'Daily Load Plan', desc: 'Aggregated loading metrics and stop sequencing for delivery dispatch.', icon: Truck, tcodes: ['LPR01', 'LP01'] },
+    { title: 'Area Wise Item Party Summary', desc: 'Consolidated sales, products, and booker performance per urban sub-area.', icon: MapPin, tcodes: ['APS01'] },
+    { title: 'Invoice', desc: 'Detailed billing statement matching official print-out specifications.', icon: FileText, tcodes: ['VF03', 'INV01'] },
+    { title: 'Sales Tax Invoice', desc: 'Detailed billing statement matching official print-out specifications under Section 23 of the Drugs Act 1976.', icon: FileText, tcodes: ['STI01', 'VF03'] },
+    { title: 'Stock Detail', desc: 'Detailed itemized transaction log showing opening balance, purchases, sales, and running ledger.', icon: Package, tcodes: ['SDR01', 'MB52'] },
+    { title: 'Sales Summary', desc: 'Daily, weekly and monthly sales analysis', icon: TrendingUp, tcodes: ['REPT'] },
+    { title: 'Inventory Valuation', desc: 'Current stock value at PP and TP', icon: Package, tcodes: ['SDR01', 'MB52'] },
+    { title: 'Shop Aging', desc: 'Outstanding payments and credit analysis', icon: Clock, tcodes: ['REPT', 'FBL5N'] },
+    { title: 'Booker Performance', desc: 'Orders and revenue by order booker', icon: Users, tcodes: ['REPT', 'OBM1'] },
+    { title: 'Product Velocity', desc: 'Fast and slow moving items', icon: BarChart3, tcodes: ['REPT', 'PR01'] },
+  ];
+
+  const allowedReports = allReportsList.filter(rep => hasAnyTCode(...rep.tcodes));
+
+  // Dynamic Navigation Guard: Ensure activeTab and active subtabs stay within authorized bounds
   useEffect(() => {
-    if (activeTab === 'admin' && !isSuperAdmin) {
+    if (!currentUser) return;
+
+    if (activeTab === 'master_data') {
+      if (allowedMasterDataTabs.length > 0 && !allowedMasterDataTabs.some(t => t.id === masterDataSubTab)) {
+        setMasterDataSubTab(allowedMasterDataTabs[0].id as any);
+      } else if (allowedMasterDataTabs.length === 0) {
+        setActiveTab('dashboard');
+      }
+    }
+
+    if (activeTab === 'transactions') {
+      if (allowedTransactionTabs.length > 0 && !allowedTransactionTabs.some(t => t.id === transactionsSubTab)) {
+        setTransactionsSubTab(allowedTransactionTabs[0].id as any);
+      } else if (allowedTransactionTabs.length === 0) {
+        setActiveTab('dashboard');
+      }
+    }
+
+    if (activeTab === 'reports' && !canAccessReports) {
       setActiveTab('dashboard');
     }
-  }, [activeTab, isSuperAdmin]);
+
+    if (activeTab === 'admin' && !canAccessAdmin) {
+      setActiveTab('dashboard');
+    }
+  }, [currentUser, activeTab, masterDataSubTab, transactionsSubTab]);
   const [isUserManagementModalOpen, setIsUserManagementModalOpen] = useState(false);
   const [isDistributorMasterModalOpen, setIsDistributorMasterModalOpen] = useState(false);
 
@@ -924,22 +1032,27 @@ export default function App() {
     }
 
     // Universal / Session commands
-    const isSessionCode = ['EXIT', 'LOGOUT', 'LOCK', 'DASH', 'REPT'].includes(finalCode);
+    const isSessionCode = ['EXIT', 'LOGOUT', 'LOCK', 'DASH', 'REPT', 'TC01', 'HELP'].includes(finalCode);
 
     // Permission enforcement: Super Admin has full access; other users require T-Code in permitted_tcodes
     if (!isSessionCode) {
-      const isPermitted = isSuperAdmin || (currentUser?.permitted_tcodes && currentUser.permitted_tcodes.includes(finalCode));
+      const isPermitted = isSuperAdmin || (currentUser?.permitted_tcodes && currentUser.permitted_tcodes.some(c => c.toUpperCase() === finalCode.toUpperCase()));
       if (!isPermitted) {
         setTCodeError(`ACCESS DENIED: ${finalCode}`);
         setToast({
           type: 'error',
-          message: `Access Denied: Transaction ${finalCode} is not permitted for your assigned role(s). Please contact Super Admin.`
+          message: `Access Denied (SU53): Transaction ${finalCode} is not permitted for your assigned role (${currentUser?.role || 'User'}).`
         });
         return;
       }
     }
 
     switch (finalCode) {
+      // AI & Smart Desk
+      case 'AI01':
+      case 'INQ01':
+        setActiveTab('ai_inquiry');
+        break;
       // Admin / Security / RBAC
       case 'ADM01':
       case 'ADMIN':
@@ -1921,25 +2034,39 @@ export default function App() {
               active={activeTab === 'dashboard'} 
               onClick={() => setActiveTab('dashboard')} 
             />
-            <SidebarItem 
-              icon={Database} 
-              label="Master Data" 
-              active={activeTab === 'master_data'} 
-              onClick={() => setActiveTab('master_data')} 
-            />
-            <SidebarItem 
-              icon={TrendingUp} 
-              label="Transactions" 
-              active={activeTab === 'transactions'} 
-              onClick={() => setActiveTab('transactions')} 
-            />
-            <SidebarItem 
-              icon={BarChart3} 
-              label="MIS - Reports" 
-              active={activeTab === 'reports'} 
-              onClick={() => setActiveTab('reports')} 
-            />
-            {isSuperAdmin && (
+            {canAccessMasterData && (
+              <SidebarItem 
+                icon={Database} 
+                label="Master Data" 
+                active={activeTab === 'master_data'} 
+                onClick={() => setActiveTab('master_data')} 
+              />
+            )}
+            {canAccessTransactions && (
+              <SidebarItem 
+                icon={TrendingUp} 
+                label="Transactions" 
+                active={activeTab === 'transactions'} 
+                onClick={() => setActiveTab('transactions')} 
+              />
+            )}
+            {canAccessReports && (
+              <SidebarItem 
+                icon={BarChart3} 
+                label="MIS - Reports" 
+                active={activeTab === 'reports'} 
+                onClick={() => setActiveTab('reports')} 
+              />
+            )}
+            {canAccessAI && (
+              <SidebarItem 
+                icon={Bot} 
+                label="AI Inquiry Desk" 
+                active={activeTab === 'ai_inquiry'} 
+                onClick={() => setActiveTab('ai_inquiry')} 
+              />
+            )}
+            {canAccessAdmin && (
               <SidebarItem 
                 icon={ShieldCheck} 
                 label="Admin" 
@@ -2589,16 +2716,7 @@ export default function App() {
 
                 {/* Sub-tabs Navigation */}
                 <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl w-fit flex-wrap">
-                  {[
-                    { id: 'distributors', label: 'Distributors', icon: Store },
-                    { id: 'suppliers', label: 'Suppliers', icon: Factory },
-                    { id: 'shops', label: 'Shops', icon: Store },
-                    { id: 'order_bookers', label: 'Order Bookers', icon: Users },
-                    { id: 'salesmen', label: 'Salesmen', icon: Users },
-                    { id: 'products', label: 'Products', icon: Package },
-                    { id: 'locations', label: 'Locations', icon: MapPin },
-                    { id: 'units', label: 'Units', icon: Settings },
-                  ].map(tab => (
+                  {allowedMasterDataTabs.map(tab => (
                     <button
                       key={tab.id}
                       onClick={() => setMasterDataSubTab(tab.id as any)}
@@ -2618,7 +2736,7 @@ export default function App() {
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all bg-slate-900 text-white hover:bg-slate-800 ml-2"
                   >
                     <Shield size={16} />
-                    <span>TCODE Mapping</span>
+                    <span>TCODE Directory (TC01)</span>
                   </button>
                 </div>
 
@@ -3573,18 +3691,7 @@ export default function App() {
                       </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {[
-                        { title: 'Daily Load Plan', desc: 'Aggregated loading metrics and stop sequencing for delivery dispatch.', icon: Truck },
-                        { title: 'Area Wise Item Party Summary', desc: 'Consolidated sales, products, and booker performance per urban sub-area.', icon: MapPin },
-                        { title: 'Invoice', desc: 'Detailed billing statement matching official print-out specifications.', icon: FileText },
-                        { title: 'Sales Tax Invoice', desc: 'Detailed billing statement matching official print-out specifications under Section 23 of the Drugs Act 1976.', icon: FileText },
-                        { title: 'Stock Detail', desc: 'Detailed itemized transaction log showing opening balance, purchases, sales, and running ledger.', icon: Package },
-                        { title: 'Sales Summary', desc: 'Daily, weekly and monthly sales analysis', icon: TrendingUp },
-                        { title: 'Inventory Valuation', desc: 'Current stock value at PP and TP', icon: Package },
-                        { title: 'Shop Aging', desc: 'Outstanding payments and credit analysis', icon: Clock },
-                        { title: 'Booker Performance', desc: 'Orders and revenue by order booker', icon: Users },
-                        { title: 'Product Velocity', desc: 'Fast and slow moving items', icon: BarChart3 },
-                      ].map((report, i) => (
+                      {allowedReports.map((report, i) => (
                         <div 
                           key={i} 
                           onClick={() => setSelectedReportTitle(report.title)}
@@ -3622,16 +3729,8 @@ export default function App() {
                 </div>
 
                 {/* Sub-tabs Navigation */}
-                <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl w-fit">
-                  {[
-                    { id: 'purchases', label: 'Purchases', icon: ShoppingBag },
-                    { id: 'orders', label: 'Orders', icon: ShoppingCart },
-                    { id: 'deliveries', label: 'Deliveries', icon: Truck },
-                    { id: 'delivery_returns', label: 'Delivery Return', icon: RotateCcw },
-                    { id: 'invoices', label: 'Invoices', icon: FileText },
-                    { id: 'sales_returns', label: 'Sales Return', icon: RotateCcw },
-                    { id: 'load_plans', label: 'Load Plans', icon: Truck },
-                  ].map(tab => (
+                <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl w-fit flex-wrap">
+                  {allowedTransactionTabs.map(tab => (
                     <button
                       key={tab.id}
                       onClick={() => setTransactionsSubTab(tab.id as any)}
@@ -4620,6 +4719,21 @@ export default function App() {
                     </div>
                   )}
                 </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'ai_inquiry' && canAccessAI && (
+              <motion.div 
+                key="ai_inquiry"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-6"
+              >
+                <AIInquiryDesk 
+                  currentUser={currentUser}
+                  formatPKR={formatPKR}
+                />
               </motion.div>
             )}
 
