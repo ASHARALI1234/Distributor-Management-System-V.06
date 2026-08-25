@@ -4679,15 +4679,24 @@ async function startServer() {
   // Invoice APIs
   app.get("/api/invoices", (req, res) => {
     const distId = req.query.distributor_id && req.query.distributor_id !== 'all' ? Number(req.query.distributor_id) : null;
-    const whereClause = distId ? `WHERE (i.distributor_id = ${distId} OR i.distributor_id IS NULL)` : '';
+    const whereClause = distId ? `WHERE (i.distributor_id = ${distId} OR (i.distributor_id IS NULL AND s.distributor_id = ${distId}))` : '';
     const invoices = db.prepare(`
       SELECT i.*, s.shop_name,
-        (SELECT GROUP_CONCAT(DISTINCT '#DEL-' || printf('%04d', d.id)) 
-         FROM deliveries d 
-         WHERE d.invoice_id = i.id OR d.id IN (SELECT DISTINCT ii.delivery_id FROM invoice_items ii WHERE ii.invoice_id = i.id)
+        COALESCE(d.name, (SELECT name FROM distributors WHERE id = 1), 'Karachi Central Logistics & Distribution') as distributor_name,
+        COALESCE(d.code, (SELECT code FROM distributors WHERE id = 1), 'DST-001') as distributor_code,
+        COALESCE(d.address, (SELECT address FROM distributors WHERE id = 1), 'Plot 45, Sector 15, Korangi Industrial Area, Karachi') as distributor_address,
+        COALESCE(d.phone, (SELECT phone FROM distributors WHERE id = 1), '021-34567890') as distributor_phone,
+        COALESCE(d.ntn_number, (SELECT ntn_number FROM distributors WHERE id = 1), '1234567-8') as distributor_ntn,
+        COALESCE(d.strn_number, (SELECT strn_number FROM distributors WHERE id = 1), '3277876123456') as distributor_strn,
+        COALESCE(d.city, (SELECT city FROM distributors WHERE id = 1), 'Karachi') as distributor_city,
+        COALESCE(d.contact_person, (SELECT contact_person FROM distributors WHERE id = 1), 'Muhammad Tariq') as distributor_contact_person,
+        (SELECT GROUP_CONCAT(DISTINCT '#DEL-' || printf('%04d', deliv.id)) 
+         FROM deliveries deliv 
+         WHERE deliv.invoice_id = i.id OR deliv.id IN (SELECT DISTINCT ii.delivery_id FROM invoice_items ii WHERE ii.invoice_id = i.id)
         ) as delivery_numbers
       FROM invoices i
       JOIN shops s ON i.shop_id = s.id
+      LEFT JOIN distributors d ON COALESCE(i.distributor_id, s.distributor_id, 1) = d.id
       ${whereClause}
       ORDER BY i.created_at DESC
     `).all();
@@ -4695,29 +4704,53 @@ async function startServer() {
   });
 
   app.post("/api/invoices", (req, res) => {
-    const { shop_id, invoice_date, delivery_ids, items, distributor_id } = req.body;
+    const { shop_id, invoice_date, delivery_ids, items, distributor_id, status } = req.body;
     const distId = distributor_id ? Number(distributor_id) : 1;
+    const invStatus = status === 'posted' ? 'posted' : 'draft';
 
     const transaction = db.transaction(() => {
+      if (!items || items.length === 0) {
+        throw new Error("Invoice must contain at least one line item.");
+      }
+
+      // 0. Validate Delivery Quantities
+      for (const item of items) {
+        const qty = Number(item.quantity);
+        if (isNaN(qty) || qty <= 0) {
+          throw new Error(`Quantity must be greater than zero for product ${item.product_name || item.product_id}`);
+        }
+        // Check delivery item max
+        if (item.delivery_item_id) {
+          const di = db.prepare(`
+            SELECT di.quantity, 
+              (di.quantity - COALESCE((SELECT SUM(ri.quantity) FROM return_items ri WHERE ri.delivery_item_id = di.id), 0)) as max_qty
+            FROM delivery_items di WHERE di.id = ?
+          `).get(item.delivery_item_id) as any;
+          if (di && qty > Number(di.max_qty)) {
+            throw new Error(`Invoice quantity (${qty}) cannot exceed delivery quantity (${di.max_qty}) for product ${item.product_name || item.product_id}`);
+          }
+        }
+      }
+
       // 1. Calculate Totals
-      const gross = items.reduce((sum: number, item: any) => sum + (item.quantity * item.unit_price), 0);
+      const gross = items.reduce((sum: number, item: any) => sum + (Number(item.quantity) * Number(item.unit_price)), 0);
       const totalDisc = items.reduce((sum: number, item: any) => {
-        const itemGross = item.quantity * item.unit_price;
-        const disc = (item.trade_discount_pct || 0) + (item.special_discount_pct || 0);
+        const itemGross = Number(item.quantity) * Number(item.unit_price);
+        const disc = (Number(item.trade_discount_pct) || 0) + (Number(item.special_discount_pct) || 0);
         return sum + (itemGross * disc / 100);
       }, 0);
       const totalTax = items.reduce((sum: number, item: any) => {
-        const itemGross = item.quantity * item.unit_price;
-        const tax = (item.tax_pct || 0) + (item.additional_tax_pct || 0);
+        const itemGross = Number(item.quantity) * Number(item.unit_price);
+        const tax = (Number(item.tax_pct) || 0) + (Number(item.additional_tax_pct) || 0);
         return sum + (itemGross * tax / 100);
       }, 0);
       const net = gross - totalDisc + totalTax;
 
       // 2. Create Invoice
       const info = db.prepare(`
-        INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, distributor_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(shop_id, invoice_date, gross, totalDisc, totalTax, net, distId);
+        INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, status, distributor_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(shop_id, invoice_date, gross, totalDisc, totalTax, net, invStatus, distId);
       const invoiceId = info.lastInsertRowid;
 
       // 3. Create Invoice Items
@@ -4730,10 +4763,15 @@ async function startServer() {
       `);
 
       for (const item of items) {
+        const itemGross = Number(item.quantity) * Number(item.unit_price);
+        const disc = (Number(item.trade_discount_pct) || 0) + (Number(item.special_discount_pct) || 0);
+        const tax = (Number(item.tax_pct) || 0) + (Number(item.additional_tax_pct) || 0);
+        const itemNet = itemGross - (itemGross * disc / 100) + (itemGross * tax / 100);
+
         insertItem.run(
           invoiceId, item.delivery_id, item.delivery_item_id, item.product_id,
-          item.quantity, item.unit_price, item.trade_discount_pct || 0,
-          item.tax_pct || 0, item.additional_tax_pct || 0, item.special_discount_pct || 0, item.net_amount
+          Number(item.quantity), Number(item.unit_price), Number(item.trade_discount_pct) || 0,
+          Number(item.tax_pct) || 0, Number(item.additional_tax_pct) || 0, Number(item.special_discount_pct) || 0, Math.round(itemNet * 100) / 100
         );
       }
 
@@ -4748,9 +4786,163 @@ async function startServer() {
 
     try {
       const invoiceId = transaction();
-      res.json({ success: true, invoiceId: invoiceId });
+      res.json({ success: true, invoiceId: invoiceId, status: invStatus });
     } catch (err: any) {
       console.error("Invoice generation failure:", err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Edit Invoice endpoint (Only allowed before posting)
+  app.put("/api/invoices/:id", (req, res) => {
+    const { id } = req.params;
+    const { invoice_date, items, status } = req.body;
+
+    const transaction = db.transaction(() => {
+      // 1. Fetch existing invoice and check status
+      const existing = db.prepare("SELECT * FROM invoices WHERE id = ?").get(id) as any;
+      if (!existing) {
+        throw new Error("Invoice not found");
+      }
+      if (existing.status === 'posted' || existing.status === 'paid') {
+        throw new Error("Cannot edit a posted invoice. Posted invoices are locked against modifications.");
+      }
+      if (existing.status === 'cancelled') {
+        throw new Error("Cannot edit a cancelled invoice.");
+      }
+
+      if (!items || items.length === 0) {
+        throw new Error("Invoice must contain at least one line item.");
+      }
+
+      // 2. Validate line item quantities against delivery quantities
+      for (const item of items) {
+        const qty = Number(item.quantity);
+        if (isNaN(qty) || qty <= 0) {
+          throw new Error(`Quantity must be greater than zero for product ${item.product_name || item.product_id}`);
+        }
+        if (item.delivery_item_id) {
+          const di = db.prepare(`
+            SELECT di.quantity, 
+              (di.quantity - COALESCE((SELECT SUM(ri.quantity) FROM return_items ri WHERE ri.delivery_item_id = di.id), 0)) as max_qty
+            FROM delivery_items di WHERE di.id = ?
+          `).get(item.delivery_item_id) as any;
+          if (di && qty > Number(di.max_qty)) {
+            throw new Error(`Invoice quantity (${qty}) cannot exceed delivery quantity (${di.max_qty}) for product ${item.product_name || item.product_id}`);
+          }
+        }
+      }
+
+      // 3. Calculate Totals
+      const gross = items.reduce((sum: number, item: any) => sum + (Number(item.quantity) * Number(item.unit_price)), 0);
+      const totalDisc = items.reduce((sum: number, item: any) => {
+        const itemGross = Number(item.quantity) * Number(item.unit_price);
+        const disc = (Number(item.trade_discount_pct) || 0) + (Number(item.special_discount_pct) || 0);
+        return sum + (itemGross * disc / 100);
+      }, 0);
+      const totalTax = items.reduce((sum: number, item: any) => {
+        const itemGross = Number(item.quantity) * Number(item.unit_price);
+        const tax = (Number(item.tax_pct) || 0) + (Number(item.additional_tax_pct) || 0);
+        return sum + (itemGross * tax / 100);
+      }, 0);
+      const net = gross - totalDisc + totalTax;
+
+      const newStatus = status === 'posted' ? 'posted' : (existing.status || 'draft');
+
+      // 4. Update Invoices table
+      db.prepare(`
+        UPDATE invoices 
+        SET invoice_date = COALESCE(?, invoice_date),
+            gross_amount = ?,
+            total_discount = ?,
+            total_tax = ?,
+            net_amount = ?,
+            status = ?
+        WHERE id = ?
+      `).run(invoice_date || existing.invoice_date, gross, totalDisc, totalTax, net, newStatus, id);
+
+      // 5. Replace invoice items
+      db.prepare("DELETE FROM invoice_items WHERE invoice_id = ?").run(id);
+
+      const insertItem = db.prepare(`
+        INSERT INTO invoice_items (
+          invoice_id, delivery_id, delivery_item_id, product_id, 
+          quantity, unit_price, trade_discount_pct, tax_pct, additional_tax_pct, special_discount_pct, net_amount
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const item of items) {
+        const itemGross = Number(item.quantity) * Number(item.unit_price);
+        const disc = (Number(item.trade_discount_pct) || 0) + (Number(item.special_discount_pct) || 0);
+        const tax = (Number(item.tax_pct) || 0) + (Number(item.additional_tax_pct) || 0);
+        const itemNet = itemGross - (itemGross * disc / 100) + (itemGross * tax / 100);
+
+        insertItem.run(
+          id, item.delivery_id, item.delivery_item_id, item.product_id,
+          Number(item.quantity), Number(item.unit_price), Number(item.trade_discount_pct) || 0,
+          Number(item.tax_pct) || 0, Number(item.additional_tax_pct) || 0, Number(item.special_discount_pct) || 0, Math.round(itemNet * 100) / 100
+        );
+      }
+
+      return { id: Number(id), status: newStatus };
+    });
+
+    try {
+      const result = transaction();
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error("Invoice update failure:", err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Post Invoice endpoint (Transitions status from draft to posted)
+  app.post("/api/invoices/:id/post", (req, res) => {
+    const { id } = req.params;
+
+    const transaction = db.transaction(() => {
+      const invoice = db.prepare("SELECT * FROM invoices WHERE id = ?").get(id) as any;
+      if (!invoice) throw new Error("Invoice not found");
+      if (invoice.status === 'posted' || invoice.status === 'paid') {
+        return { success: true, message: "Invoice is already posted", alreadyPosted: true };
+      }
+      if (invoice.status === 'cancelled') {
+        throw new Error("Cannot post a cancelled invoice.");
+      }
+
+      // Re-verify line quantities against delivery quantities
+      const items = db.prepare("SELECT * FROM invoice_items WHERE invoice_id = ?").all(id) as any[];
+      if (!items || items.length === 0) {
+        throw new Error("Cannot post an empty invoice.");
+      }
+
+      for (const item of items) {
+        const qty = Number(item.quantity);
+        if (isNaN(qty) || qty <= 0) {
+          throw new Error(`Invalid line quantity for item ${item.product_id}`);
+        }
+        if (item.delivery_item_id) {
+          const di = db.prepare(`
+            SELECT di.quantity, 
+              (di.quantity - COALESCE((SELECT SUM(ri.quantity) FROM return_items ri WHERE ri.delivery_item_id = di.id), 0)) as max_qty
+            FROM delivery_items di WHERE di.id = ?
+          `).get(item.delivery_item_id) as any;
+          if (di && qty > Number(di.max_qty)) {
+            throw new Error(`Invoice quantity (${qty}) cannot exceed delivery quantity (${di.max_qty}) for product ${item.product_id}`);
+          }
+        }
+      }
+
+      db.prepare("UPDATE invoices SET status = 'posted' WHERE id = ?").run(id);
+      return { success: true, message: "Invoice successfully posted" };
+    });
+
+    try {
+      const result = transaction();
+      res.json(result);
+    } catch (err: any) {
+      console.error("Invoice posting failure:", err);
       res.status(400).json({ error: err.message });
     }
   });
@@ -4759,9 +4951,18 @@ async function startServer() {
     try {
       const { id } = req.params;
       const invoice = db.prepare(`
-        SELECT i.*, s.shop_name, s.owner_name, s.location, s.phone
+        SELECT i.*, s.shop_name, s.owner_name, s.location, s.phone,
+          COALESCE(d.name, (SELECT name FROM distributors WHERE id = 1), 'Karachi Central Logistics & Distribution') as distributor_name,
+          COALESCE(d.code, (SELECT code FROM distributors WHERE id = 1), 'DST-001') as distributor_code,
+          COALESCE(d.address, (SELECT address FROM distributors WHERE id = 1), 'Plot 45, Sector 15, Korangi Industrial Area, Karachi') as distributor_address,
+          COALESCE(d.phone, (SELECT phone FROM distributors WHERE id = 1), '021-34567890') as distributor_phone,
+          COALESCE(d.ntn_number, (SELECT ntn_number FROM distributors WHERE id = 1), '1234567-8') as distributor_ntn,
+          COALESCE(d.strn_number, (SELECT strn_number FROM distributors WHERE id = 1), '3277876123456') as distributor_strn,
+          COALESCE(d.city, (SELECT city FROM distributors WHERE id = 1), 'Karachi') as distributor_city,
+          COALESCE(d.contact_person, (SELECT contact_person FROM distributors WHERE id = 1), 'Muhammad Tariq') as distributor_contact_person
         FROM invoices i
         JOIN shops s ON i.shop_id = s.id
+        LEFT JOIN distributors d ON COALESCE(i.distributor_id, s.distributor_id, 1) = d.id
         WHERE i.id = ?
       `).get(id) as any;
 
@@ -4770,11 +4971,15 @@ async function startServer() {
       }
 
       const items = db.prepare(`
-        SELECT ii.*, p.product_name, p.unit as uom,
+        SELECT ii.*, p.product_name, p.brand, p.unit as uom,
+               di.quantity as delivery_quantity,
+               (di.quantity - COALESCE((SELECT SUM(ri.quantity) FROM return_items ri WHERE ri.delivery_item_id = di.id), 0)) as max_delivery_qty,
+               COALESCE((SELECT SUM(ri.quantity) FROM return_items ri WHERE ri.delivery_item_id = di.id), 0) as return_qty,
                d.delivery_date,
                (SELECT sm.name FROM salesmen sm WHERE sm.id = d.salesman_id) as salesman_name
         FROM invoice_items ii
         JOIN products p ON ii.product_id = p.product_id
+        LEFT JOIN delivery_items di ON ii.delivery_item_id = di.id
         LEFT JOIN deliveries d ON ii.delivery_id = d.id
         WHERE ii.invoice_id = ?
       `).all(id);
@@ -5214,16 +5419,44 @@ async function startServer() {
 
   app.get("/api/reports/invoices-range", (req, res) => {
     try {
-      const { startDate, endDate, invoiceNoFrom, invoiceNoTo } = req.query;
+      const { startDate, endDate, invoiceNoFrom, invoiceNoTo, distributorId, distributor_id, status, onlyPosted, reportType } = req.query;
+      const targetDistId = distributorId || distributor_id;
 
       let queryStr = `
-        SELECT i.*, s.shop_name, s.owner_name, s.location, s.phone
+        SELECT i.*, s.shop_name, s.owner_name, s.location, s.phone,
+          COALESCE(d.name, (SELECT name FROM distributors WHERE id = 1), 'Karachi Central Logistics & Distribution') as distributor_name,
+          COALESCE(d.code, (SELECT code FROM distributors WHERE id = 1), 'DST-001') as distributor_code,
+          COALESCE(d.address, (SELECT address FROM distributors WHERE id = 1), 'Plot 45, Sector 15, Korangi Industrial Area, Karachi') as distributor_address,
+          COALESCE(d.phone, (SELECT phone FROM distributors WHERE id = 1), '021-34567890') as distributor_phone,
+          COALESCE(d.ntn_number, (SELECT ntn_number FROM distributors WHERE id = 1), '1234567-8') as distributor_ntn,
+          COALESCE(d.strn_number, (SELECT strn_number FROM distributors WHERE id = 1), '3277876123456') as distributor_strn,
+          COALESCE(d.city, (SELECT city FROM distributors WHERE id = 1), 'Karachi') as distributor_city,
+          COALESCE(d.contact_person, (SELECT contact_person FROM distributors WHERE id = 1), 'Muhammad Tariq') as distributor_contact_person
         FROM invoices i
         JOIN shops s ON i.shop_id = s.id
+        LEFT JOIN distributors d ON COALESCE(i.distributor_id, s.distributor_id, 1) = d.id
       `;
 
       const params: any[] = [];
       const conditions: string[] = [];
+
+      // Status filter (e.g., only posted invoices for Sales Tax Invoice report)
+      if (status) {
+        if (status === 'posted') {
+          conditions.push("(i.status = 'posted' OR i.status = 'paid')");
+        } else {
+          conditions.push("i.status = ?");
+          params.push(status);
+        }
+      } else if (onlyPosted === 'true' || reportType === 'sales_tax') {
+        conditions.push("(i.status = 'posted' OR i.status = 'paid')");
+      }
+
+      if (targetDistId && targetDistId !== 'all') {
+        const dId = Number(targetDistId);
+        conditions.push("(i.distributor_id = ? OR (i.distributor_id IS NULL AND s.distributor_id = ?))");
+        params.push(dId, dId);
+      }
 
       if (startDate) {
         conditions.push("strftime('%Y-%m-%d', i.invoice_date) >= ?");

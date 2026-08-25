@@ -349,13 +349,23 @@ export interface Invoice {
   id: number;
   shop_id: number;
   shop_name?: string;
+  distributor_id?: number;
+  distributor_name?: string;
+  distributor_code?: string;
+  distributor_address?: string;
+  distributor_phone?: string;
+  distributor_ntn?: string;
+  distributor_strn?: string;
+  distributor_city?: string;
+  distributor_contact_person?: string;
+  delivery_numbers?: string;
   invoice_date: string;
   gross_amount: number;
   total_discount: number;
   total_tax: number;
   net_amount: number;
   items_summary?: string;
-  status: 'open' | 'paid' | 'cancelled';
+  status: 'draft' | 'open' | 'posted' | 'paid' | 'cancelled';
   created_at: string;
 }
 
@@ -366,11 +376,16 @@ export interface InvoiceItem {
   delivery_item_id: number;
   product_id: string;
   product_name?: string;
+  brand?: string;
   uom?: string;
   quantity: number;
+  delivery_quantity?: number;
+  max_delivery_qty?: number;
+  return_qty?: number;
   unit_price: number;
   trade_discount_pct: number;
   tax_pct: number;
+  additional_tax_pct?: number;
   special_discount_pct: number;
   net_amount: number;
 }

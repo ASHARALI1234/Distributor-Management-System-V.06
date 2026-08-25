@@ -103,7 +103,7 @@ import {
 import { LoginScreen } from './components/LoginScreen';
 import { UserManagementModal } from './components/modals/UserManagementModal';
 import { DistributorMasterModal } from './components/modals/DistributorMasterModal';
-import { InvoiceTransactionModal, DisplayInvoiceModal } from './components/modals/InvoiceModals';
+import { InvoiceTransactionModal, EditInvoiceModal, DisplayInvoiceModal } from './components/modals/InvoiceModals';
 import { 
   DisplayOrderModal, 
   DisplayDeliveryModal, 
@@ -680,6 +680,8 @@ export default function App() {
   const [isMaterialGroupModalOpen, setIsMaterialGroupModalOpen] = useState(false);
   const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isEditInvoiceModalOpen, setIsEditInvoiceModalOpen] = useState(false);
+  const [editInvoiceId, setEditInvoiceId] = useState<number | string | null>(null);
   const [isDisplayInvoiceModalOpen, setIsDisplayInvoiceModalOpen] = useState(false);
   const [displayInvoiceId, setDisplayInvoiceId] = useState<number | string | null>(null);
   const [isDisplayOrderModalOpen, setIsDisplayOrderModalOpen] = useState(false);
@@ -1089,8 +1091,21 @@ export default function App() {
         setTransactionsSubTab('deliveries');
         break;
       case 'INV01':
+      case 'VF01':
         setIsInvoiceModalOpen(true);
         break;
+      case 'INV02':
+      case 'VF02': {
+        const parts = finalCode.split(/\s+/);
+        if (parts.length > 1) {
+          setEditInvoiceId(parts[1]);
+        } else {
+          setEditInvoiceId(null);
+        }
+        setIsEditInvoiceModalOpen(true);
+        setIsCommandExpanded(false);
+        break;
+      }
       case 'VA03': 
         setIsDisplayOrderModalOpen(true);
         setIsCommandExpanded(false);
@@ -1764,6 +1779,26 @@ export default function App() {
       setChartData(data);
     } catch (err) {
       console.error("Failed to fetch chart data", err);
+    }
+  };
+
+  const handlePostInvoice = async (invoiceId: number) => {
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Invoice #INV-${invoiceId.toString().padStart(4, '0')} has been successfully posted and released to MIS Sales Tax Reports.`);
+        fetchInvoices();
+        fetchDeliveries();
+      } else {
+        showToast(data.error || 'Failed to post invoice', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Error posting invoice', 'error');
     }
   };
 
@@ -4522,6 +4557,17 @@ export default function App() {
                             <span>Display Invoice (VF03)</span>
                           </button>
                           <button 
+                            onClick={() => {
+                              setEditInvoiceId(null);
+                              setIsEditInvoiceModalOpen(true);
+                            }}
+                            className="bg-amber-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-amber-700 transition-all shadow-md shadow-amber-100 flex items-center gap-2"
+                            title="Edit Draft Invoice (VF02)"
+                          >
+                            <Edit size={18} />
+                            <span>Edit Invoice (VF02)</span>
+                          </button>
+                          <button 
                             onClick={() => setIsInvoiceModalOpen(true)}
                             className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center gap-2"
                           >
@@ -4596,15 +4642,41 @@ export default function App() {
                                 </td>
                                 <td className="px-6 py-4">
                                   <span className={cn(
-                                    "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap",
+                                    "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap inline-flex items-center gap-1",
                                     invoice.status === 'cancelled' ? "bg-slate-100 text-slate-500 border border-slate-200" :
-                                    invoice.status === 'open' ? "bg-amber-50 text-amber-600 border border-amber-100" : "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                                    invoice.status === 'posted' ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                                    invoice.status === 'paid' ? "bg-blue-50 text-blue-700 border border-blue-200" :
+                                    "bg-amber-50 text-amber-700 border border-amber-200"
                                   )}>
-                                    {invoice.status}
+                                    {invoice.status === 'posted' && <ShieldCheck size={11} className="text-emerald-600" />}
+                                    {invoice.status === 'draft' && <Clock size={11} className="text-amber-600" />}
+                                    {invoice.status || 'draft'}
                                   </span>
                                 </td>
                                 <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
-                                  <div className="flex justify-end gap-2">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {(invoice.status === 'draft' || !invoice.status) && (
+                                      <>
+                                        <button 
+                                          onClick={() => handlePostInvoice(invoice.id)}
+                                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-all"
+                                          title="Post Invoice (Lock & Release to MIS Sales Tax Reports)"
+                                        >
+                                          <ShieldCheck size={13} />
+                                          <span>Post</span>
+                                        </button>
+                                        <button 
+                                          onClick={() => {
+                                            setEditInvoiceId(invoice.id);
+                                            setIsEditInvoiceModalOpen(true);
+                                          }}
+                                          className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                          title="Edit Invoice (VF02)"
+                                        >
+                                          <Edit size={18} />
+                                        </button>
+                                      </>
+                                    )}
                                     <button 
                                       onClick={() => {
                                         setDisplayInvoiceId(invoice.id);
@@ -5043,6 +5115,33 @@ export default function App() {
             formatPKR={formatPKR}
             onOpenDisplayInvoice={(invId) => {
               setIsInvoiceModalOpen(false);
+              setDisplayInvoiceId(invId || null);
+              setIsDisplayInvoiceModalOpen(true);
+            }}
+            onOpenEditInvoice={(invId) => {
+              setIsInvoiceModalOpen(false);
+              setEditInvoiceId(invId || null);
+              setIsEditInvoiceModalOpen(true);
+            }}
+          />
+        )}
+        {isEditInvoiceModalOpen && (
+          <EditInvoiceModal 
+            onClose={() => {
+              setIsEditInvoiceModalOpen(false);
+              setEditInvoiceId(null);
+            }}
+            formatPKR={formatPKR}
+            initialInvoiceId={editInvoiceId}
+            onSuccess={() => {
+              fetchInvoices();
+              fetchDeliveries();
+              setIsEditInvoiceModalOpen(false);
+              setEditInvoiceId(null);
+            }}
+            onOpenDisplayInvoice={(invId) => {
+              setIsEditInvoiceModalOpen(false);
+              setEditInvoiceId(null);
               setDisplayInvoiceId(invId || null);
               setIsDisplayInvoiceModalOpen(true);
             }}

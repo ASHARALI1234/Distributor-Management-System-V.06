@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, FileText, Printer, RefreshCw, Code, Layers, Search, Calendar, X, ExternalLink, ChevronDown } from 'lucide-react';
+import { ArrowLeft, FileText, Printer, RefreshCw, Code, Layers, Search, Calendar, X, ExternalLink, ChevronDown, Building2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { Distributor } from '../../types';
 
 interface InvoiceItem {
   id: number;
@@ -33,6 +34,16 @@ interface InvoiceRecord {
   owner_name: string;
   location: string;
   phone: string;
+  distributor_id?: number;
+  distributor_name?: string;
+  distributor_code?: string;
+  distributor_address?: string;
+  distributor_phone?: string;
+  distributor_email?: string;
+  distributor_ntn?: string;
+  distributor_strn?: string;
+  distributor_city?: string;
+  distributor_contact_person?: string;
   items: InvoiceItem[];
 }
 
@@ -125,6 +136,10 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
   const initialInvoiceNoFrom = urlParams.get('invoiceNoFrom') || '';
   const initialInvoiceNoTo = urlParams.get('invoiceNoTo') || '';
 
+  const [distributors, setDistributors] = useState<Distributor[]>([]);
+  const initialDistributor = urlParams.get('distributorId') || 'all';
+  const [selectedDistributor, setSelectedDistributor] = useState<string>(initialDistributor);
+
   // Filters state
   const [startDate, setStartDate] = useState<string>(initialStartDate);
   const [endDate, setEndDate] = useState<string>(initialEndDate);
@@ -138,8 +153,24 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
   const [showIframePrintModal, setShowIframePrintModal] = useState<boolean>(false);
 
   useEffect(() => {
+    fetchDistributors();
+  }, []);
+
+  const fetchDistributors = async () => {
+    try {
+      const res = await fetch('/api/distributors');
+      if (res.ok) {
+        const data = await res.json();
+        setDistributors(data);
+      }
+    } catch (e) {
+      console.error("Failed to load distributors", e);
+    }
+  };
+
+  useEffect(() => {
     fetchReportData();
-  }, [startDate, endDate]);
+  }, [startDate, endDate, selectedDistributor]);
 
   // Auto-print effect when launched with ?print=true (bypasses iframe block in standalone tab)
   useEffect(() => {
@@ -163,6 +194,12 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
       if (endDate) queryParams.set('endDate', endDate);
       if (invoiceNoFrom) queryParams.set('invoiceNoFrom', invoiceNoFrom);
       if (invoiceNoTo) queryParams.set('invoiceNoTo', invoiceNoTo);
+      if (selectedDistributor && selectedDistributor !== 'all') {
+        queryParams.set('distributorId', selectedDistributor);
+      }
+      // Strictly query only POSTED invoices as per MIS Sales Tax compliance
+      queryParams.set('status', 'posted');
+      queryParams.set('onlyPosted', 'true');
 
       const res = await fetch(`/api/reports/invoices-range?${queryParams.toString()}`);
       if (!res.ok) {
@@ -192,6 +229,9 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
     if (endDate) params.set('endDate', endDate);
     if (invoiceNoFrom) params.set('invoiceNoFrom', invoiceNoFrom);
     if (invoiceNoTo) params.set('invoiceNoTo', invoiceNoTo);
+    if (selectedDistributor && selectedDistributor !== 'all') {
+      params.set('distributorId', selectedDistributor);
+    }
     return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
   };
 
@@ -297,7 +337,22 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Invoice Selection parameters</h3>
           </div>
           
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 items-end">
+            {/* Distributor Filter */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Distributor</label>
+              <select
+                value={selectedDistributor}
+                onChange={(e) => setSelectedDistributor(e.target.value)}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all"
+              >
+                <option value="all">All Distributors</option>
+                {distributors.map(d => (
+                  <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                ))}
+              </select>
+            </div>
+
             {/* Invoice Date From */}
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">Invoice Date From</label>
@@ -353,6 +408,7 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
                 setEndDate('2021-06-16');
                 setInvoiceNoFrom('');
                 setInvoiceNoTo('');
+                setSelectedDistributor('all');
               }}
               className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all"
             >
@@ -415,9 +471,9 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
               <div className="bg-slate-50 p-4 rounded-full w-fit mx-auto text-slate-400">
                 <FileText size={32} />
               </div>
-              <h3 className="font-bold text-slate-800 text-sm">No Invoices Located</h3>
+              <h3 className="font-bold text-slate-800 text-sm">No Posted Invoices Located</h3>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                No invoices were found matching the parameters. Try adjusting the Date From/To or Invoice range filters.
+                Only finalized and <strong className="text-emerald-700 font-semibold">Posted Invoices</strong> are printed in the Sales Tax Invoice MIS report. Draft/Unposted invoices must be posted in Invoices (INV01 / VF02) before appearing here.
               </p>
             </div>
           ) : (
@@ -481,13 +537,13 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
                       {/* Brand Header conforming strictly to "Sales Tax Invoice" style */}
                       <div className="text-center mb-1">
                         <h1 className="text-[18px] font-black tracking-wider uppercase text-black">
-                          FBM DISTRIBUTORS
+                          {invoice.distributor_name || 'Karachi Central Logistics & Distribution'}
                         </h1>
                         <h2 className="text-[11px] font-bold uppercase text-black mt-0.5">
-                          PLOT # LA-7 BLOCK NO. 22, F.B INDUSTRIAL AREA, KHI
+                          {invoice.distributor_address || 'PLOT # LA-7 BLOCK NO. 22, F.B INDUSTRIAL AREA, KHI'}
                         </h2>
                         <h2 className="text-[11px] font-bold text-black mt-0.5">
-                          Phone No. : 0321-2427799 Fax No. : NTN No. : 27670490
+                          Phone No. : {invoice.distributor_phone || '0321-2427799'} {invoice.distributor_strn ? `STRN No. : ${invoice.distributor_strn}` : ''} NTN No. : {invoice.distributor_ntn || '27670490'}
                         </h2>
                       </div>
 
@@ -645,7 +701,7 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
                         <div className="font-bold uppercase tracking-wider">WARRANTY:-</div>
                         <div className="font-bold">Warranty Under Section 23 of the drugs Act. 1976</div>
                         <p className="text-justify">
-                          I, MUHAMMAD FARHAN being a person resident in Pakistan carrying Business on PLOT # LA-7/4 BLOCK NO 22 FEDERAL B INDUSTRIAL AREA, KARACHI. under the Name of FBM DISTRIBUTORS do hereby give this warranty that the drugs here under described as sold by me specified and contained in the bill of sale describing the goods referred to herein do not contraveene in any way the provisions of Section 23 of the Drugs Act 1976.
+                          I, {invoice.distributor_contact_person || 'MUHAMMAD FARHAN'} being a person resident in Pakistan carrying Business on {invoice.distributor_address || 'PLOT # LA-7/4 BLOCK NO 22 FEDERAL B INDUSTRIAL AREA, KARACHI.'} under the Name of {invoice.distributor_name || 'FBM DISTRIBUTORS'} do hereby give this warranty that the drugs here under described as sold by me specified and contained in the bill of sale describing the goods referred to herein do not contraveene in any way the provisions of Section 23 of the Drugs Act 1976.
                         </p>
                         <p className="font-bold mt-1 text-black">
                           Note: Check Goods before leaving counter no responsibility after delivery. No Exchange/Return Without Original Invoice.

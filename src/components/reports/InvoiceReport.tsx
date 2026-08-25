@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, FileText, Printer, RefreshCw, Code, Layers, Search, Calendar, X, ExternalLink, ChevronDown } from 'lucide-react';
+import { ArrowLeft, FileText, Printer, RefreshCw, Code, Layers, Search, Calendar, X, ExternalLink, ChevronDown, Building2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { Distributor } from '../../types';
 
 interface InvoiceItem {
   id: number;
@@ -33,6 +34,16 @@ interface InvoiceRecord {
   owner_name: string;
   location: string;
   phone: string;
+  distributor_id?: number;
+  distributor_name?: string;
+  distributor_code?: string;
+  distributor_address?: string;
+  distributor_phone?: string;
+  distributor_email?: string;
+  distributor_ntn?: string;
+  distributor_strn?: string;
+  distributor_city?: string;
+  distributor_contact_person?: string;
   items: InvoiceItem[];
 }
 
@@ -126,6 +137,10 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
   const initialInvoiceNoFrom = urlParams.get('invoiceNoFrom') || '';
   const initialInvoiceNoTo = urlParams.get('invoiceNoTo') || '';
 
+  const [distributors, setDistributors] = useState<Distributor[]>([]);
+  const initialDistributor = urlParams.get('distributorId') || 'all';
+  const [selectedDistributor, setSelectedDistributor] = useState<string>(initialDistributor);
+
   // Filters state
   const [startDate, setStartDate] = useState<string>(initialStartDate);
   const [endDate, setEndDate] = useState<string>(initialEndDate);
@@ -139,8 +154,24 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
   const [showIframePrintModal, setShowIframePrintModal] = useState<boolean>(false);
 
   useEffect(() => {
+    fetchDistributors();
+  }, []);
+
+  const fetchDistributors = async () => {
+    try {
+      const res = await fetch('/api/distributors');
+      if (res.ok) {
+        const data = await res.json();
+        setDistributors(data);
+      }
+    } catch (e) {
+      console.error("Failed to load distributors", e);
+    }
+  };
+
+  useEffect(() => {
     fetchReportData();
-  }, [startDate, endDate]);
+  }, [startDate, endDate, selectedDistributor]);
 
   // Auto-print effect when launched with ?print=true (bypasses iframe block in standalone tab)
   useEffect(() => {
@@ -164,6 +195,9 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
       if (endDate) queryParams.set('endDate', endDate);
       if (invoiceNoFrom) queryParams.set('invoiceNoFrom', invoiceNoFrom);
       if (invoiceNoTo) queryParams.set('invoiceNoTo', invoiceNoTo);
+      if (selectedDistributor && selectedDistributor !== 'all') {
+        queryParams.set('distributorId', selectedDistributor);
+      }
 
       const res = await fetch(`/api/reports/invoices-range?${queryParams.toString()}`);
       if (!res.ok) {
@@ -193,6 +227,9 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
     if (endDate) params.set('endDate', endDate);
     if (invoiceNoFrom) params.set('invoiceNoFrom', invoiceNoFrom);
     if (invoiceNoTo) params.set('invoiceNoTo', invoiceNoTo);
+    if (selectedDistributor && selectedDistributor !== 'all') {
+      params.set('distributorId', selectedDistributor);
+    }
     return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
   };
 
@@ -298,7 +335,22 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Invoice Selection parameters</h3>
           </div>
           
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 items-end">
+            {/* Distributor Filter */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Distributor</label>
+              <select
+                value={selectedDistributor}
+                onChange={(e) => setSelectedDistributor(e.target.value)}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all"
+              >
+                <option value="all">All Distributors</option>
+                {distributors.map(d => (
+                  <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                ))}
+              </select>
+            </div>
+
             {/* Invoice Date From */}
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">Invoice Date From</label>
@@ -354,6 +406,7 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
                 setEndDate('2021-06-16');
                 setInvoiceNoFrom('');
                 setInvoiceNoTo('');
+                setSelectedDistributor('all');
               }}
               className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all"
             >
@@ -482,7 +535,7 @@ export const InvoiceReport: React.FC<InvoiceReportProps> = ({ onBack, formatPKR 
                       {/* Brand Header */}
                       <div className="text-center mb-6">
                         <h1 className="text-[18px] font-black tracking-wider uppercase text-black">
-                          FBM DISTRIBUTORS
+                          {invoice.distributor_name || 'Karachi Central Logistics & Distribution'}
                         </h1>
                         <h2 className="text-[13px] font-bold mt-0.5 text-black">
                           Estimate
