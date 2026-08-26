@@ -646,7 +646,6 @@ try {
   }
 
   // Backfill existing records to distributor_id = 1 (Karachi Central / DST-001) where distributor_id is NULL
-  // and delete all transactional data for distributors other than DST-001
   try {
     const dst001Row = db.prepare("SELECT id FROM distributors WHERE code = 'DST-001' LIMIT 1").get() as any;
     const dst001Id = dst001Row ? dst001Row.id : 1;
@@ -660,51 +659,9 @@ try {
       }
       // Set non-admin users with NULL distributor_id to DST-001
       db.exec(`UPDATE users SET distributor_id = ${dst001Id} WHERE role NOT IN ('admin', 'super_admin') AND distributor_id IS NULL;`);
-
-      // 2. Delete all transactional data for any distributor other than DST-001
-      // Sales returns
-      db.exec(`DELETE FROM sales_return_items WHERE sales_return_id IN (SELECT id FROM sales_returns WHERE distributor_id != ${dst001Id});`);
-      db.exec(`DELETE FROM sales_returns WHERE distributor_id != ${dst001Id};`);
-
-      // Purchase returns
-      db.exec(`DELETE FROM purchase_return_items WHERE purchase_return_id IN (SELECT id FROM purchase_returns WHERE distributor_id != ${dst001Id});`);
-      db.exec(`DELETE FROM purchase_returns WHERE distributor_id != ${dst001Id};`);
-
-      // Invoices
-      db.exec(`DELETE FROM invoice_items WHERE invoice_id IN (SELECT id FROM invoices WHERE distributor_id != ${dst001Id});`);
-      db.exec(`DELETE FROM invoices WHERE distributor_id != ${dst001Id};`);
-
-      // Deliveries
-      db.exec(`DELETE FROM delivery_items WHERE delivery_id IN (SELECT id FROM deliveries WHERE distributor_id != ${dst001Id});`);
-      db.exec(`DELETE FROM deliveries WHERE distributor_id != ${dst001Id};`);
-
-      // Load plans
-      db.exec(`DELETE FROM load_plan_items WHERE plan_id IN (SELECT id FROM load_plans WHERE distributor_id != ${dst001Id});`);
-      db.exec(`DELETE FROM load_plans WHERE distributor_id != ${dst001Id};`);
-
-      // Orders
-      db.exec(`DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE distributor_id != ${dst001Id});`);
-      db.exec(`DELETE FROM orders WHERE distributor_id != ${dst001Id};`);
-
-      // Returns
-      db.exec(`DELETE FROM return_items WHERE return_id IN (SELECT id FROM returns WHERE distributor_id != ${dst001Id});`);
-      db.exec(`DELETE FROM returns WHERE distributor_id != ${dst001Id};`);
-
-      // Purchases
-      db.exec(`DELETE FROM purchase_items WHERE purchase_id IN (SELECT id FROM purchases WHERE distributor_id != ${dst001Id});`);
-      db.exec(`DELETE FROM purchases WHERE distributor_id != ${dst001Id};`);
-
-      // Payments
-      db.exec(`DELETE FROM payments WHERE distributor_id != ${dst001Id};`);
-
-      // Product batches linked to deleted purchases
-      db.exec(`DELETE FROM product_batches WHERE purchase_id IS NOT NULL AND purchase_id NOT IN (SELECT id FROM purchases);`);
-
-      // Client ledger for shops of distributors other than DST-001
-      db.exec(`DELETE FROM client_ledger WHERE shop_id IN (SELECT id FROM shops WHERE distributor_id != ${dst001Id});`);
     })();
   } catch (e) {
-    console.warn("Distributor backfill/cleanup error:", e);
+    console.warn("Distributor backfill error:", e);
   }
 
   // Backfill initial MAP and Inventory Value for existing products
@@ -1735,16 +1692,15 @@ function seedSouthZoneData() {
         VALUES (2, 'DST-002', 'South Zone FMCG Distribution', 'Nadeem Khan', '021-35678901', 'sales@southzone.pk', 'Shop 12-14, Wholesale Market, Saddar, Karachi', 'Karachi', '2345678-9', '3277876123457', 'ACTIVE')
       `).run();
 
-      // 2. Users for South Zone
-      const insertUser = db.prepare(`
-        INSERT OR IGNORE INTO users (name, role, phone, password, distributor_id)
-        VALUES (?, ?, ?, ?, 2)
+      // 2. 2 New Suppliers
+      const insertSupp = db.prepare(`
+        INSERT OR IGNORE INTO suppliers (name, contact_person, phone, address)
+        VALUES (?, ?, ?, ?)
       `);
-      insertUser.run('Tariq Mahmood', 'salesman', '03005551234', 'south123');
-      insertUser.run('Nadeem Khan', 'order_booker', '03005559876', 'south123');
-      insertUser.run('Bilal South', 'salesman', '03219988776', 'south123');
+      insertSupp.run('South Coast FMCG Traders', 'Mohsin Raza', '03009988114', 'Plot 18, Phase 2 Ext, DHA / Clifton Corridor, Karachi');
+      insertSupp.run('Saddar Wholesale Agro Suppliers', 'Haris Sheikh', '03009988115', 'Shop 45, Daryalal Street, Saddar Wholesale Hub, Karachi');
 
-      // 3. Order Bookers for South Zone
+      // 3. 2 Order Bookers for DST-002
       const insertBooker = db.prepare(`
         INSERT OR IGNORE INTO order_bookers (name, father_name, cell_no, cnic_no, joining_date, distributor_id)
         VALUES (?, ?, ?, ?, ?, 2)
@@ -1752,7 +1708,7 @@ function seedSouthZoneData() {
       insertBooker.run('Rashid Mehmood', 'Mehmood Ul Hassan', '03005552211', '42301-4455667-1', '2024-03-15');
       insertBooker.run('Waqas Siddiqui', 'Siddique Ahmed', '03335553322', '42301-7788990-2', '2024-05-01');
 
-      // 4. Salesmen for South Zone
+      // 4. 2 Salesmen for DST-002
       const insertSalesman = db.prepare(`
         INSERT OR IGNORE INTO salesmen (name, father_name, cell_no, cnic_no, joining_date, distributor_id)
         VALUES (?, ?, ?, ?, ?, 2)
@@ -1760,7 +1716,7 @@ function seedSouthZoneData() {
       insertSalesman.run('Hamza Farooq', 'Farooq Azam', '03005554433', '42301-1122334-3', '2024-02-20');
       insertSalesman.run('Danish Qureshi', 'Qureshi Iqbal', '03125555544', '42301-5566778-4', '2024-04-10');
 
-      // 5. Drivers for South Zone
+      // Drivers for DST-002
       const insertDriver = db.prepare(`
         INSERT OR IGNORE INTO drivers (name, father_name, cell_no, cnic_no, joining_date, distributor_id)
         VALUES (?, ?, ?, ?, ?, 2)
@@ -1768,48 +1724,75 @@ function seedSouthZoneData() {
       insertDriver.run('Ghulam Rasool', 'Allah Ditta', '03455556655', '42301-9988776-5', '2024-01-10');
       insertDriver.run('Iftikhar Hussain', 'Hussain Baksh', '03465557766', '42301-3344556-6', '2024-03-25');
 
-      // 6. Shops for South Zone (Distinct South Karachi areas)
+      // Users for South Zone
+      const insertUser = db.prepare(`
+        INSERT OR IGNORE INTO users (name, role, phone, password, distributor_id)
+        VALUES (?, ?, ?, ?, 2)
+      `);
+      insertUser.run('Tariq Mahmood', 'salesman', '03005551234', 'south123');
+      insertUser.run('Rashid Mehmood', 'order_booker', '03005552211', 'south123');
+      insertUser.run('Waqas Siddiqui', 'order_booker', '03335553322', 'south123');
+      insertUser.run('Hamza Farooq', 'salesman', '03005554433', 'south123');
+      insertUser.run('Danish Qureshi', 'salesman', '03125555544', 'south123');
+
+      // 5. 6 New Shops with AREA and SUB-AREA in SADDAR and CLIFTON
       const insertShop = db.prepare(`
         INSERT OR IGNORE INTO shops (shop_name, owner_name, area, subarea, location, address, phone, credit_limit, category, distributor_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
       `);
-      insertShop.run('South Super Market', 'Irfan Merchant', 'Saddar', 'Saddar Wholesale', 'Saddar Wholesale', 'Shop 12-14, Wholesale Market, Saddar', '03008881101', 80000, 'Wholesaler');
-      insertShop.run('Clifton Mart & Grocery', 'Sikandar Ali', 'Clifton', 'Block 2', 'Block 2', 'Shop 4, Block 2, Clifton', '03008881102', 120000, 'Retailer');
-      insertShop.run('Kharadar Cash & Carry', 'Haji Abdul Sattar', 'Kharadar', 'Bolton Market', 'Bolton Market', 'Near Bolton Market, Kharadar', '03008881103', 150000, 'Wholesaler');
-      insertShop.run('Burns Road Store', 'Naveed Sheikh', 'Burns Road', 'Food Street', 'Food Street', 'Shop 8, Burns Road Food Street', '03008881104', 60000, 'Retailer');
-      insertShop.run('Defence Mini Mart', 'Kamran Zubair', 'DHA', 'Phase 5 Commercial', 'Phase 5 Commercial', 'Plot 22-C, Phase 5, DHA', '03008881105', 100000, 'Modern Trade');
-      insertShop.run('Zamzama Express Shop', 'Junaid Siddiqui', 'DHA', 'Zamzama Commercial', 'Zamzama Commercial', 'Shop 3, Zamzama Lane 4, DHA', '03008881106', 75000, 'Retailer');
+      insertShop.run('Saddar Wholesale Super Mart', 'Irfan Merchant', 'Saddar', 'Empress Market', 'Empress Market, Saddar', 'Shop 12-14, Preedy Street, Empress Market, Saddar, Karachi', '03008881101', 150000, 'Wholesaler');
+      insertShop.run('Regal Electronics & General Store', 'Muhammad Naveed', 'Saddar', 'Regal Chowk', 'Regal Chowk, Saddar', 'Shop 5, Near Regal Chowk, Saddar, Karachi', '03008881102', 100000, 'Retailer');
+      insertShop.run('Zaibunnisa Commercial Cash & Carry', 'Tariq Sheikh', 'Saddar', 'Zaibunnisa Street', 'Zaibunnisa Street, Saddar', 'Plot 28, Zaibunnisa Street, Saddar, Karachi', '03008881103', 180000, 'Wholesaler');
+      insertShop.run('Clifton Marine Supermarket', 'Sikandar Ali', 'Clifton', 'Block 2', 'Block 2, Clifton', 'Shop 4-B, Main Clifton Road, Block 2, Clifton, Karachi', '03008881104', 200000, 'Modern Trade');
+      insertShop.run('Boat Basin Express Grocery', 'Kamran Zubair', 'Clifton', 'Boat Basin', 'Boat Basin, Clifton', 'Shop 18, Food Street Commercial, Boat Basin, Clifton, Karachi', '03008881105', 120000, 'Retailer');
+      insertShop.run('Park Towers Gourmet Mart', 'Junaid Siddiqui', 'Clifton', 'Block 5', 'Block 5, Clifton', 'Lower Ground Floor, Near Park Towers, Block 5, Clifton, Karachi', '03008881106', 250000, 'Supermarket');
 
-      // 7. Products for South Zone
+      // 6. Copy all Products Master Data from DST-001 (Karachi Central) to DST-002
+      const dst1Products = db.prepare("SELECT * FROM products WHERE distributor_id = 1 OR distributor_id IS NULL").all() as any[];
       const insertProduct = db.prepare(`
-        INSERT OR IGNORE INTO products (product_id, product_name, brand, material_group_id, purchase_price, trade_price, retail_price, stock_quantity, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, inventory_value, moving_average_price, distributor_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
+        INSERT OR REPLACE INTO products (
+          product_id, product_name, brand, material_group_id, purchase_price, trade_price, retail_price, 
+          stock_quantity, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, 
+          inventory_value, moving_average_price, distributor_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
       `);
-      insertProduct.run('S000000001', 'Canola Oil 1L Pouch', 'Seasons', '00001', 520, 560, 600, 150, 'EA', 1, 'L', 25, 50, 78000, 520);
-      insertProduct.run('S000000002', 'Premium Danedar Tea 450g', 'Vital Tea', '00003', 680, 730, 780, 85, 'EA', 450, 'GR', 15, 30, 57800, 680);
-      insertProduct.run('S000000003', 'Beauty Soap 140g Pack of 3', 'Dettol', '00003', 280, 310, 350, 210, 'PK', 3, 'EA', 40, 80, 58800, 280);
-      insertProduct.run('S000000004', 'Basmati Rice 5kg Bag', 'Guard Super', '00002', 1750, 1880, 2050, 45, 'PK', 5, 'KG', 10, 20, 78750, 1750);
-      insertProduct.run('S000000005', 'Detergent Powder 1kg', 'Surf Excel', '00003', 440, 480, 520, 120, 'EA', 1, 'KG', 20, 40, 52800, 440);
-      insertProduct.run('S000000006', 'Energy Drink 250ml Can', 'Roar Energy', '00001', 110, 130, 160, 350, 'EA', 250, 'ML', 50, 100, 38500, 110);
-      insertProduct.run('S000000007', 'Chili Garlic Sauce 800g', 'Shangrila', '00001', 320, 355, 390, 95, 'EA', 800, 'GR', 15, 30, 30400, 320);
 
-      // Batches for South Zone
-      const sProds = db.prepare("SELECT * FROM products WHERE distributor_id = 2").all() as any[];
-      for (const p of sProds) {
-        const existing = db.prepare("SELECT id FROM product_batches WHERE product_id = ?").get(p.product_id);
-        if (!existing) {
+      for (const p of dst1Products) {
+        const s2ProdId = 'S2-' + p.product_id;
+        insertProduct.run(
+          s2ProdId,
+          p.product_name,
+          p.brand,
+          p.material_group_id,
+          p.purchase_price,
+          p.trade_price,
+          p.retail_price,
+          p.stock_quantity,
+          p.unit || 'EACH',
+          p.conversion_value || 1,
+          p.conversion_unit || 'EACH',
+          p.min_stock_level || 10,
+          p.reorder_level || 20,
+          (p.stock_quantity || 0) * (p.purchase_price || 0),
+          p.moving_average_price || p.purchase_price
+        );
+
+        // Product Batches for FIFO Tracking
+        const existingBatch = db.prepare("SELECT id FROM product_batches WHERE product_id = ?").get(s2ProdId);
+        if (!existingBatch) {
           db.prepare("INSERT INTO product_batches (product_id, quantity, remaining_quantity, purchase_price) VALUES (?, ?, ?, ?)").run(
-            p.product_id, p.stock_quantity, p.stock_quantity, p.purchase_price
+            s2ProdId, p.stock_quantity, p.stock_quantity, p.purchase_price
           );
         }
       }
 
-      // Seed South Zone Orders if none exist
+      // 7. Seed South Zone Orders, Deliveries & Invoices for comprehensive reporting
       const sOrdersCount = (db.prepare("SELECT COUNT(*) as count FROM orders WHERE distributor_id = 2").get() as any)?.count || 0;
       if (sOrdersCount === 0) {
         const sShops = db.prepare("SELECT id FROM shops WHERE distributor_id = 2").all() as any[];
         const sBookers = db.prepare("SELECT id FROM order_bookers WHERE distributor_id = 2").all() as any[];
         const sSalesmen = db.prepare("SELECT id FROM salesmen WHERE distributor_id = 2").all() as any[];
+        const sProds = db.prepare("SELECT * FROM products WHERE distributor_id = 2").all() as any[];
 
         if (sShops.length > 0 && sBookers.length > 0 && sProds.length > 0) {
           const dates = [
@@ -1841,17 +1824,17 @@ function seedSouthZoneData() {
               VALUES (?, ?, ?, ?, 'delivered', ?, 2)
             `).run(orderId, shop.id, sSalesmen[0]?.id || 1, orderDate, total).lastInsertRowid;
 
-            db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oi1, p1.product_id, qty1, p1.trade_price);
-            db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oi2, p2.product_id, qty2, p2.trade_price);
+            const di1 = db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oi1, p1.product_id, qty1, p1.trade_price).lastInsertRowid;
+            const di2 = db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oi2, p2.product_id, qty2, p2.trade_price).lastInsertRowid;
 
             const invId = db.prepare(`
-              INSERT INTO invoices (invoice_number, delivery_id, shop_id, total_amount, status, created_at, distributor_id)
-              VALUES (?, ?, ?, ?, 'PAID', ?, 2)
-            `).run(`INV-SZ-${orderId}`, delId, shop.id, total, orderDate).lastInsertRowid;
+              INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, status, created_at, distributor_id)
+              VALUES (?, ?, ?, 0, 0, ?, 'paid', ?, 2)
+            `).run(shop.id, orderDate, total, total, orderDate).lastInsertRowid;
 
             db.prepare("UPDATE deliveries SET invoice_id = ? WHERE id = ?").run(invId, delId);
-            db.prepare("INSERT INTO invoice_items (invoice_id, product_id, quantity, price, total) VALUES (?, ?, ?, ?, ?)").run(invId, p1.product_id, qty1, p1.trade_price, qty1 * p1.trade_price);
-            db.prepare("INSERT INTO invoice_items (invoice_id, product_id, quantity, price, total) VALUES (?, ?, ?, ?, ?)").run(invId, p2.product_id, qty2, p2.trade_price, qty2 * p2.trade_price);
+            db.prepare("INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount) VALUES (?, ?, ?, ?, ?, ?, ?)").run(invId, delId, di1, p1.product_id, qty1, p1.trade_price, qty1 * p1.trade_price);
+            db.prepare("INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount) VALUES (?, ?, ?, ?, ?, ?, ?)").run(invId, delId, di2, p2.product_id, qty2, p2.trade_price, qty2 * p2.trade_price);
           }
 
           // 1 Pending Order
@@ -1866,16 +1849,8 @@ function seedSouthZoneData() {
           db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, ?, ?, ?, 'pending')").run(pendingOrdId, pProd.product_id, 10, pProd.trade_price);
         }
       }
-
-      // 8. Suppliers
-      const insertSupp = db.prepare(`
-        INSERT OR IGNORE INTO suppliers (name, contact_person, phone, address)
-        VALUES (?, ?, ?, ?)
-      `);
-      insertSupp.run('South Edible Oils & Ghee Ltd', 'Tariq Mehmood', '03009988112', 'Korangi Creek Industrial Area, Karachi');
-      insertSupp.run('National Foods South Depot', 'Shahid Rauf', '03009988113', 'Port Qasim Hub, Karachi');
     })();
-    console.log("[Database] South Zone master data verified and ready!");
+    console.log("[Database] South Zone (DST-002) master data and product replication verified and ready!");
   } catch (err) {
     console.error("[Database Error] Seeding South Zone master data failed:", err);
   }
