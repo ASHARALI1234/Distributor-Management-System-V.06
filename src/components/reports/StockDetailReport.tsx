@@ -27,9 +27,22 @@ interface LedgerItem {
 interface StockDetailReportProps {
   onBack: () => void;
   formatPKR: (num: number) => string;
+  distributorId?: string | number | null;
+  isSuperAdmin?: boolean;
+  currentUser?: any;
 }
 
-export const StockDetailReport: React.FC<StockDetailReportProps> = ({ onBack, formatPKR }) => {
+export const StockDetailReport: React.FC<StockDetailReportProps> = ({ 
+  onBack, 
+  formatPKR,
+  distributorId,
+  isSuperAdmin,
+  currentUser
+}) => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramDistId = urlParams.get('distributor_id') || urlParams.get('distributorId');
+  const activeDistId = distributorId || paramDistId || (currentUser?.distributor_id ? String(currentUser.distributor_id) : 'all');
+
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [productSearch, setProductSearch] = useState<string>('');
@@ -49,21 +62,28 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({ onBack, fo
 
   const productSearchRef = useRef<HTMLInputElement>(null);
 
-  // Fetch products for autocomplete on mount
+  // Fetch products for autocomplete on mount or when distributor changes
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const res = await fetch('/api/products');
+        const queryParams = new URLSearchParams();
+        if (activeDistId && activeDistId !== 'all') {
+          queryParams.set('distributor_id', String(activeDistId));
+        }
+        const res = await fetch(`/api/products?${queryParams.toString()}`);
         if (res.ok) {
           const data = await res.json();
           setProducts(data);
           // Set initial product as default to make it look ready
           if (data.length > 0) {
-            // Find "Cooking Oil 1L" or first item
             const dalda = data.find((p: Product) => p.product_name.toLowerCase().includes('oil') || p.product_name.toLowerCase().includes('sugar'));
             const initial = dalda || data[0];
             setSelectedProductId(initial.product_id);
             setProductSearch(initial.product_name);
+          } else {
+            setSelectedProductId('');
+            setProductSearch('');
+            setReportData(null);
           }
         }
       } catch (err) {
@@ -71,7 +91,7 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({ onBack, fo
       }
     };
     fetchProducts();
-  }, []);
+  }, [activeDistId]);
 
   // Sync search input with selection when blurred
   const handleProductBlur = () => {
@@ -106,6 +126,9 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({ onBack, fo
       params.set('productId', selectedProductId);
       params.set('startDate', startDate);
       params.set('endDate', endDate);
+      if (activeDistId && activeDistId !== 'all') {
+        params.set('distributor_id', String(activeDistId));
+      }
 
       const res = await fetch(`/api/reports/stock-detail?${params.toString()}`);
       if (!res.ok) {
@@ -126,7 +149,7 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({ onBack, fo
     if (selectedProductId) {
       fetchReport();
     }
-  }, [selectedProductId]);
+  }, [selectedProductId, activeDistId]);
 
   const handlePrint = () => {
     window.print();

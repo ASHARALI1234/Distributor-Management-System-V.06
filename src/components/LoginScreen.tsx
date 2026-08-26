@@ -88,6 +88,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const adminUser = availableUsers.find(u => u.role === 'admin') || { name: 'Admin Karachi', phone: '03001234567', distributor_name: 'All Distributors' };
   const centralUser = availableUsers.find(u => u.distributor_id === 1 && u.role !== 'admin') || availableUsers.find(u => u.role !== 'admin') || { name: 'Salman', phone: '03007654321', distributor_name: 'Karachi Central' };
   const southUser = availableUsers.find(u => u.distributor_id === 2) || { name: 'Tariq Mahmood', phone: '03005551234', distributor_name: 'South Zone FMCG' };
+  const northUser = availableUsers.find(u => u.distributor_id === 3) || { name: 'Farhan Ali', phone: '03005559900', distributor_name: 'North Region' };
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col justify-center items-center p-4 relative overflow-hidden">
@@ -183,7 +184,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center mb-2.5">
             Quick 1-Click Demo Logins
           </p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => handleQuickLogin(adminUser.name, 'admin123')}
@@ -195,11 +196,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                   <span className="text-[11px] font-bold text-white group-hover:text-indigo-300 transition-colors truncate">
                     Admin
                   </span>
-                  <UserCheck size={11} className="text-indigo-400 shrink-0" />
+                  <UserCheck size={12} className="text-indigo-400 shrink-0" />
                 </div>
-                <p className="text-[9px] text-slate-400 truncate">HQ Master</p>
+                <p className="text-[9px] text-slate-400 truncate">HQ Consolidated (All)</p>
               </div>
-              <span className="text-[9px] font-mono text-indigo-400 font-semibold mt-1.5">admin123</span>
+              <span className="text-[9px] font-mono text-indigo-400 font-semibold mt-1">admin123</span>
             </button>
 
             <button
@@ -213,11 +214,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                   <span className="text-[11px] font-bold text-white group-hover:text-emerald-300 transition-colors truncate">
                     {centralUser.name}
                   </span>
-                  <CheckCircle2 size={11} className="text-emerald-400 shrink-0" />
+                  <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
                 </div>
-                <p className="text-[9px] text-slate-400 truncate">Central Zone</p>
+                <p className="text-[9px] text-slate-400 truncate">DST-001 (Central)</p>
               </div>
-              <span className="text-[9px] font-mono text-emerald-400 font-semibold mt-1.5">Salman123</span>
+              <span className="text-[9px] font-mono text-emerald-400 font-semibold mt-1">Salman123</span>
             </button>
 
             <button
@@ -231,11 +232,29 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                   <span className="text-[11px] font-bold text-white group-hover:text-amber-300 transition-colors truncate">
                     {southUser.name.split(' ')[0]}
                   </span>
-                  <Building2 size={11} className="text-amber-400 shrink-0" />
+                  <Building2 size={12} className="text-amber-400 shrink-0" />
                 </div>
-                <p className="text-[9px] text-slate-400 truncate">South Zone</p>
+                <p className="text-[9px] text-slate-400 truncate">DST-002 (South)</p>
               </div>
-              <span className="text-[9px] font-mono text-amber-400 font-semibold mt-1.5">south123</span>
+              <span className="text-[9px] font-mono text-amber-400 font-semibold mt-1">south123</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleQuickLogin(northUser.name, 'north123')}
+              disabled={loading}
+              className="p-2.5 bg-slate-900/80 hover:bg-sky-950/60 border border-slate-700 hover:border-sky-500/50 rounded-xl text-left transition-all group flex flex-col justify-between"
+            >
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-white group-hover:text-sky-300 transition-colors truncate">
+                    {northUser.name.split(' ')[0]}
+                  </span>
+                  <Building2 size={12} className="text-sky-400 shrink-0" />
+                </div>
+                <p className="text-[9px] text-slate-400 truncate">DST-003 (North)</p>
+              </div>
+              <span className="text-[9px] font-mono text-sky-400 font-semibold mt-1">north123</span>
             </button>
           </div>
         </div>

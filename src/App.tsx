@@ -2334,7 +2334,14 @@ export default function App() {
                 <div className="flex justify-between items-end">
                   <div>
                     <h2 className="text-2xl font-bold text-slate-900">Market Overview</h2>
-                    <p className="text-slate-500">Real-time distribution metrics for Karachi region</p>
+                    <p className="text-slate-500">
+                      {currentUser?.role === 'admin'
+                        ? (selectedDistributorId === 'all' 
+                            ? 'Real-time consolidated distribution metrics for all distributors' 
+                            : `Real-time distribution metrics for ${distributors.find(d => String(d.id) === String(selectedDistributorId))?.name || 'Selected Distributor'}`)
+                        : `Real-time distribution metrics for ${currentUser?.distributor_name || 'Assigned Distributor'}`
+                      }
+                    </p>
                   </div>
                   <div className="flex items-center gap-3">
                     <button 
@@ -3178,9 +3185,21 @@ export default function App() {
                             <h3 className="text-lg font-bold text-slate-900 mb-1">{shop.shop_name}</h3>
                             <p className="text-sm text-slate-500 mb-4">{shop.owner_name}</p>
                             <div className="space-y-3 pt-4 border-t border-slate-50">
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <MapPin size={16} className="text-slate-400" />
-                                <span>{shop.location}</span>
+                              <div className="flex items-start gap-2 text-sm text-slate-600">
+                                <MapPin size={16} className="text-slate-400 mt-0.5 shrink-0" />
+                                <div className="min-w-0">
+                                  {shop.area && (
+                                    <span className="inline-block px-1.5 py-0.2 text-[10px] font-bold bg-indigo-50 text-indigo-700 rounded mr-1.5">
+                                      {shop.area}
+                                    </span>
+                                  )}
+                                  <span className="font-medium text-slate-800">{shop.subarea || shop.location}</span>
+                                  {shop.address && (
+                                    <p className="text-xs text-slate-500 truncate mt-0.5" title={shop.address}>
+                                      {shop.address}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                               <div className="flex items-center gap-2 text-sm text-slate-600">
                                 <Phone size={16} className="text-slate-400" />
@@ -3646,27 +3665,42 @@ export default function App() {
                 {selectedReportTitle === 'Daily Load Plan' ? (
                   <DailyLoadPlanReport 
                     onBack={() => setSelectedReportTitle(null)} 
-                    formatPKR={formatPKR} 
+                    formatPKR={formatPKR}
+                    distributorId={currentUser?.distributor_id}
+                    isSuperAdmin={isSuperAdmin}
+                    currentUser={currentUser}
                   />
                 ) : selectedReportTitle === 'Area Wise Item Party Summary' ? (
                   <AreaWiseItemPartySummaryReport 
                     onBack={() => setSelectedReportTitle(null)} 
-                    formatPKR={formatPKR} 
+                    formatPKR={formatPKR}
+                    distributorId={currentUser?.distributor_id}
+                    isSuperAdmin={isSuperAdmin}
+                    currentUser={currentUser}
                   />
                 ) : selectedReportTitle === 'Invoice' ? (
                   <InvoiceReport 
                     onBack={() => setSelectedReportTitle(null)} 
-                    formatPKR={formatPKR} 
+                    formatPKR={formatPKR}
+                    distributorId={currentUser?.distributor_id}
+                    isSuperAdmin={isSuperAdmin}
+                    currentUser={currentUser}
                   />
                 ) : selectedReportTitle === 'Sales Tax Invoice' ? (
                   <SalesTaxInvoiceReport 
                     onBack={() => setSelectedReportTitle(null)} 
-                    formatPKR={formatPKR} 
+                    formatPKR={formatPKR}
+                    distributorId={currentUser?.distributor_id}
+                    isSuperAdmin={isSuperAdmin}
+                    currentUser={currentUser}
                   />
                 ) : selectedReportTitle === 'Stock Detail' ? (
                   <StockDetailReport 
                     onBack={() => setSelectedReportTitle(null)} 
-                    formatPKR={formatPKR} 
+                    formatPKR={formatPKR}
+                    distributorId={currentUser?.distributor_id}
+                    isSuperAdmin={isSuperAdmin}
+                    currentUser={currentUser}
                   />
                 ) : selectedReportTitle ? (
                   <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-6">

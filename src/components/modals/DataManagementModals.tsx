@@ -1,7 +1,8 @@
 import React, { useState, useEffect, FormEvent } from 'react';
-import { X, Save, Trash2, Edit, Store, Package, Plus, Trash, Factory, MapPin, Search } from 'lucide-react';
+import { X, Save, Trash2, Edit, Store, Package, Plus, Trash, Factory, MapPin, Search, Building2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Shop, Product, Unit, MaterialGroup, Supplier } from '../../types';
+import { cn } from '../../lib/utils';
 
 export const RegisterSupplierModal = ({ 
   onClose, 
@@ -380,33 +381,61 @@ export const RegisterShopModal = ({
   const [formData, setFormData] = useState({
     shop_name: '',
     owner_name: '',
-    location: '',
+    area: '',
+    subarea: '',
+    address: '',
     phone: '',
-    credit_limit: '0'
+    credit_limit: '0',
+    category: 'Retailer'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [subareas, setSubareas] = useState<{ id: number; name: string }[]>([]);
-  const [showDropdown, setShowDropdown] = useState(false);
+  const [areas, setAreas] = useState<{ id: number; name: string; town_id?: number; town_name?: string }[]>([]);
+  const [allSubareas, setAllSubareas] = useState<{ id: number; name: string; area_id: number; area_name?: string }[]>([]);
+  const [showAreaDropdown, setShowAreaDropdown] = useState(false);
+  const [showSubareaDropdown, setShowSubareaDropdown] = useState(false);
 
-  // Fetch Subareas for Google-Search-Style Autocomplete
+  // Fetch Areas and Subareas
   useEffect(() => {
-    const fetchSubareas = async () => {
+    const fetchLocations = async () => {
       try {
-        const res = await fetch('/api/locations/subareas');
-        if (res.ok) {
-          const data = await res.json();
-          setSubareas(data || []);
+        const [areasRes, subareasRes] = await Promise.all([
+          fetch('/api/locations/areas'),
+          fetch('/api/locations/subareas')
+        ]);
+        if (areasRes.ok) {
+          const areasData = await areasRes.json();
+          setAreas(areasData || []);
+        }
+        if (subareasRes.ok) {
+          const subareasData = await subareasRes.json();
+          setAllSubareas(subareasData || []);
         }
       } catch (err) {
-        console.error("Failed to fetch subareas", err);
+        console.error("Failed to fetch location master data", err);
       }
     };
-    fetchSubareas();
+    fetchLocations();
   }, []);
 
-  const filteredSubareas = subareas.filter(sa =>
-    (sa.name || '').toLowerCase().includes((formData.location || '').toLowerCase())
-  ).slice(0, 10);
+  // Filter areas matching current input
+  const filteredAreas = areas.filter(a =>
+    (a.name || '').toLowerCase().includes((formData.area || '').toLowerCase())
+  );
+
+  // Find currently matched area
+  const matchedArea = areas.find(a => 
+    a.name.toLowerCase() === (formData.area || '').toLowerCase().trim()
+  );
+
+  // Available subareas based on chosen Area
+  const availableSubareas = allSubareas.filter(sa => {
+    if (!formData.area) return true;
+    if (matchedArea && sa.area_id === matchedArea.id) return true;
+    if (sa.area_name && sa.area_name.toLowerCase() === formData.area.toLowerCase().trim()) return true;
+    return (sa.name || '').toLowerCase().includes(formData.area.toLowerCase());
+  }).filter(sa => 
+    !formData.subarea || (sa.name || '').toLowerCase().includes(formData.subarea.toLowerCase())
+  );
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -432,12 +461,25 @@ export const RegisterShopModal = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
-          credit_limit: parseFloat(formData.credit_limit)
+          location: formData.subarea || formData.area || '',
+          credit_limit: parseFloat(formData.credit_limit) || 0
         })
       });
       if (res.ok) {
         onSuccess();
-        setFormData({ shop_name: '', location: '', owner_name: '', phone: '', credit_limit: '0', registration_date: new Date().toISOString().split('T')[0] });
+        setFormData({ 
+          shop_name: '', 
+          owner_name: '', 
+          area: '', 
+          subarea: '', 
+          address: '', 
+          phone: '', 
+          credit_limit: '0', 
+          category: 'Retailer' 
+        });
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to register shop");
       }
     } catch (err) {
       console.error("Failed to register shop", err);
@@ -452,61 +494,209 @@ export const RegisterShopModal = ({
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.98 }}
-        className="bg-white w-full h-full rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        className="bg-white w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
       >
         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-10">
-          <h3 className="text-lg font-bold text-slate-900">Register New Shop</h3>
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-indigo-600 rounded-xl text-white shadow-md shadow-indigo-100">
+              <Store size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Register New Shop</h3>
+              <p className="text-xs text-slate-500">Add shop with Google-search Area lookup & Address</p>
+            </div>
+          </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-colors shrink-0" title="Close (F3)">
             <X size={20} className="text-slate-500" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-bold text-slate-700 mb-1">Shop Name</label>
-            <input 
-              required
-              type="text" 
-              value={formData.shop_name}
-              onChange={e => setFormData({...formData, shop_name: e.target.value})}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
-              placeholder="e.g. Bismillah General Store"
-            />
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                Shop Name <span className="text-rose-500">*</span>
+              </label>
+              <input 
+                required
+                type="text" 
+                value={formData.shop_name}
+                onChange={e => setFormData({...formData, shop_name: e.target.value})}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all"
+                placeholder="e.g. Bismillah General Store"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                Owner Name <span className="text-rose-500">*</span>
+              </label>
+              <input 
+                required
+                type="text" 
+                value={formData.owner_name}
+                onChange={e => setFormData({...formData, owner_name: e.target.value})}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all"
+                placeholder="e.g. Ahmed Ali"
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-bold text-slate-700 mb-1">Owner Name</label>
-            <input 
-              required
-              type="text" 
-              value={formData.owner_name}
-              onChange={e => setFormData({...formData, owner_name: e.target.value})}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
-              placeholder="e.g. Ahmed Ali"
-            />
-          </div>
+
+          {/* AREA Field - Google Search Style Format */}
           <div className="relative">
-            <label className="block text-sm font-bold text-slate-700 mb-1">Sub-area (Location)</label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                <MapPin size={18} />
+            <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                Area <span className="text-rose-500">*</span>
+              </span>
+              <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                Google Search Format
+              </span>
+            </label>
+
+            {/* Google Search Styled Input Container */}
+            <div className="relative flex items-center">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <Search size={18} className="text-indigo-500" />
               </div>
               <input 
                 required
                 type="text" 
-                value={formData.location}
+                value={formData.area}
                 onChange={e => {
-                  setFormData({...formData, location: e.target.value});
-                  setShowDropdown(true);
+                  const val = e.target.value;
+                  setFormData(prev => ({
+                    ...prev, 
+                    area: val,
+                    subarea: prev.area !== val ? '' : prev.subarea
+                  }));
+                  setShowAreaDropdown(true);
                 }}
-                onFocus={() => setShowDropdown(true)}
-                onBlur={() => setTimeout(() => setShowDropdown(false), 250)}
-                className="w-full pl-10 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all focus:bg-white shadow-sm"
-                placeholder="Search sub-areas e.g. UC-7 Gulistan-e-Jauhar..."
+                onFocus={() => setShowAreaDropdown(true)}
+                onBlur={() => setTimeout(() => setShowAreaDropdown(false), 250)}
+                className="w-full pl-10 pr-10 py-3 bg-white border-2 border-slate-200 rounded-2xl text-sm font-medium text-slate-900 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-100 outline-none transition-all shadow-sm placeholder:text-slate-400"
+                placeholder="Search or enter Area (e.g. Gulshan-e-Iqbal, North Nazimabad, Saddar)..."
+                autoComplete="off"
               />
-              {formData.location && (
+              {formData.area && (
                 <button
                   type="button"
-                  onClick={() => setFormData({...formData, location: ''})}
+                  onClick={() => {
+                    setFormData(prev => ({ ...prev, area: '', subarea: '' }));
+                  }}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+                  title="Clear Area"
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+
+            {/* Area Suggestions Dropdown */}
+            {showAreaDropdown && (
+              <div className="absolute left-0 right-0 mt-1.5 max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 divide-y divide-slate-100">
+                <div className="px-3.5 py-2 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <span>Suggested Areas</span>
+                  <span>{filteredAreas.length} Found</span>
+                </div>
+                {filteredAreas.length > 0 ? (
+                  filteredAreas.map(a => {
+                    const subCount = allSubareas.filter(sa => sa.area_id === a.id || sa.area_name?.toLowerCase() === a.name.toLowerCase()).length;
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onMouseDown={() => {
+                          setFormData(prev => ({
+                            ...prev,
+                            area: a.name,
+                            subarea: '' // reset subarea to trigger choosing from new area
+                          }));
+                          setShowAreaDropdown(false);
+                        }}
+                        className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-indigo-50/70 text-left transition-colors group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-1.5 bg-slate-100 text-slate-500 rounded-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                            <MapPin size={14} />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors block leading-snug">
+                              {a.name}
+                            </span>
+                            {a.town_name && (
+                              <span className="text-[10px] text-slate-400 block mt-0.5">
+                                Town: {a.town_name}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full group-hover:bg-indigo-100 group-hover:text-indigo-700 transition-colors">
+                          {subCount} Sub-areas
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="p-4 text-center">
+                    <p className="text-xs text-slate-500">No predefined area matching "{formData.area}"</p>
+                    <button
+                      type="button"
+                      onMouseDown={() => setShowAreaDropdown(false)}
+                      className="mt-1 text-xs font-bold text-indigo-600 hover:underline"
+                    >
+                      Use "{formData.area}" as custom area
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* SUB-AREA Field - Dynamically Filtered by Area */}
+          <div className="relative">
+            <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                Sub-Area <span className="text-rose-500">*</span>
+              </span>
+              {formData.area ? (
+                <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                  {availableSubareas.length} available in {formData.area}
+                </span>
+              ) : (
+                <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                  Select Area above first
+                </span>
+              )}
+            </label>
+
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <MapPin size={17} className={formData.area ? "text-indigo-600" : "text-slate-400"} />
+              </div>
+              <input 
+                required
+                type="text" 
+                value={formData.subarea}
+                onChange={e => {
+                  setFormData({...formData, subarea: e.target.value});
+                  setShowSubareaDropdown(true);
+                }}
+                onFocus={() => setShowSubareaDropdown(true)}
+                onBlur={() => setTimeout(() => setShowSubareaDropdown(false), 250)}
+                className={cn(
+                  "w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all shadow-sm font-medium",
+                  !formData.area && "border-amber-200 bg-amber-50/20"
+                )}
+                placeholder={
+                  formData.area 
+                    ? `Select or enter Sub-area in ${formData.area}...` 
+                    : "Enter Area above to filter sub-areas..."
+                }
+                autoComplete="off"
+              />
+              {formData.subarea && (
+                <button
+                  type="button"
+                  onClick={() => setFormData({...formData, subarea: ''})}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
                 >
                   <X size={16} />
@@ -514,63 +704,132 @@ export const RegisterShopModal = ({
               )}
             </div>
 
-            {showDropdown && filteredSubareas.length > 0 && (
-              <div className="absolute left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 divide-y divide-slate-50">
-                {filteredSubareas.map(sa => (
-                  <button
-                    key={sa.id}
-                    type="button"
-                    onClick={() => {
-                      setFormData({...formData, location: sa.name});
-                      setShowDropdown(false);
-                    }}
-                    className="w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-50 text-left transition-all group"
-                  >
-                    <MapPin size={16} className="text-slate-400 group-hover:text-indigo-600 shrink-0" />
-                    <div>
-                      <span className="text-sm font-medium text-slate-800 group-hover:text-indigo-600 transition-colors block leading-tight">{sa.name}</span>
-                      <span className="text-[10px] text-slate-400 font-mono tracking-wider uppercase block mt-0.5">Sub-area Master Data</span>
-                    </div>
-                  </button>
-                ))}
+            {/* Subarea Dropdown */}
+            {showSubareaDropdown && (
+              <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 divide-y divide-slate-100">
+                {availableSubareas.length > 0 ? (
+                  availableSubareas.map(sa => (
+                    <button
+                      key={sa.id}
+                      type="button"
+                      onMouseDown={() => {
+                        setFormData(prev => ({
+                          ...prev,
+                          subarea: sa.name,
+                          area: prev.area || sa.area_name || prev.area
+                        }));
+                        setShowSubareaDropdown(false);
+                      }}
+                      className="w-full px-3.5 py-2.5 flex items-center justify-between hover:bg-slate-50 text-left transition-all group"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <MapPin size={14} className="text-slate-400 group-hover:text-indigo-600 shrink-0" />
+                        <div>
+                          <span className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors block leading-tight">
+                            {sa.name}
+                          </span>
+                          {sa.area_name && (
+                            <span className="text-[10px] text-slate-400 block mt-0.5">
+                              Area: {sa.area_name}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="p-3 text-center">
+                    <p className="text-xs text-slate-500">
+                      {formData.area 
+                        ? `No sub-areas currently configured under "${formData.area}"` 
+                        : "Please select an Area above to view sub-areas"}
+                    </p>
+                    {formData.subarea && (
+                      <button
+                        type="button"
+                        onMouseDown={() => setShowSubareaDropdown(false)}
+                        className="mt-1 text-xs font-bold text-indigo-600 hover:underline"
+                      >
+                        Use "{formData.subarea}" as custom sub-area
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          {/* ADDRESS Field */}
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-1">Phone Number</label>
-            <input 
-              required
-              type="tel" 
-              value={formData.phone}
-              onChange={e => setFormData({...formData, phone: e.target.value})}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
-              placeholder="e.g. 03001234567"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-bold text-slate-700 mb-1">Credit Limit (PKR)</label>
-            <input 
-              required
-              type="number" 
-              value={formData.credit_limit}
-              onChange={e => setFormData({...formData, credit_limit: e.target.value})}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
-              placeholder="0"
-            />
+            <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider flex items-center gap-1.5">
+              <span>Shop Address / Street Details</span>
+            </label>
+            <div className="relative">
+              <div className="absolute top-3 left-3 flex items-center pointer-events-none text-slate-400">
+                <Building2 size={16} />
+              </div>
+              <textarea 
+                rows={2}
+                value={formData.address}
+                onChange={e => setFormData({...formData, address: e.target.value})}
+                className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all shadow-sm resize-none"
+                placeholder="e.g. Shop # 14, Main Market, Block 13-D, Near Al-Mustafa Medical Center"
+              />
+            </div>
           </div>
 
-          <div className="pt-4 flex gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">Phone Number</label>
+              <input 
+                required
+                type="tel" 
+                value={formData.phone}
+                onChange={e => setFormData({...formData, phone: e.target.value})}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all"
+                placeholder="e.g. 03001234567"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">Credit Limit (PKR)</label>
+              <input 
+                required
+                type="number" 
+                value={formData.credit_limit}
+                onChange={e => setFormData({...formData, credit_limit: e.target.value})}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all font-mono"
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">Category</label>
+              <select 
+                required
+                value={formData.category}
+                onChange={e => setFormData({...formData, category: e.target.value})}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all"
+              >
+                <option value="Retailer">Retailer</option>
+                <option value="Wholesaler">Wholesaler</option>
+                <option value="Mart">Mart</option>
+                <option value="General Store">General Store</option>
+                <option value="Pharmacy">Pharmacy</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="pt-4 flex gap-3 border-t border-slate-100">
             <button 
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-100 transition-colors"
+              className="flex-1 px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200 transition-colors"
             >
               Close (F3)
             </button>
             <button 
               type="submit"
               disabled={isSubmitting}
-              className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+              className="flex-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 shadow-lg shadow-indigo-100"
             >
               {isSubmitting ? 'Registering...' : 'Register Shop (F2 / CTRL+S)'}
             </button>
@@ -593,7 +852,9 @@ export const ShopMasterModal = ({
   const [formData, setFormData] = useState({
     shop_name: '',
     owner_name: '',
-    location: '',
+    area: '',
+    subarea: '',
+    address: '',
     phone: '',
     credit_limit: 0,
     category: 'Retailer'
@@ -601,34 +862,61 @@ export const ShopMasterModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [subareas, setSubareas] = useState<{ id: number; name: string }[]>([]);
-  const [showDropdown, setShowDropdown] = useState(false);
+  const [areas, setAreas] = useState<{ id: number; name: string; town_id?: number; town_name?: string }[]>([]);
+  const [allSubareas, setAllSubareas] = useState<{ id: number; name: string; area_id: number; area_name?: string }[]>([]);
+  const [showAreaDropdown, setShowAreaDropdown] = useState(false);
+  const [showSubareaDropdown, setShowSubareaDropdown] = useState(false);
 
-  // Fetch Subareas for Google-Search-Style Autocomplete
+  // Fetch Areas and Subareas
   useEffect(() => {
-    const fetchSubareas = async () => {
+    const fetchLocations = async () => {
       try {
-        const res = await fetch('/api/locations/subareas');
-        if (res.ok) {
-          const data = await res.json();
-          setSubareas(data || []);
+        const [areasRes, subareasRes] = await Promise.all([
+          fetch('/api/locations/areas'),
+          fetch('/api/locations/subareas')
+        ]);
+        if (areasRes.ok) {
+          const areasData = await areasRes.json();
+          setAreas(areasData || []);
+        }
+        if (subareasRes.ok) {
+          const subareasData = await subareasRes.json();
+          setAllSubareas(subareasData || []);
         }
       } catch (err) {
-        console.error("Failed to fetch subareas", err);
+        console.error("Failed to fetch location master data", err);
       }
     };
-    fetchSubareas();
+    fetchLocations();
   }, []);
 
-  const filteredSubareas = subareas.filter(sa =>
-    (sa.name || '').toLowerCase().includes((formData.location || '').toLowerCase())
-  ).slice(0, 10);
+  // Filter areas matching current input
+  const filteredAreas = areas.filter(a =>
+    (a.name || '').toLowerCase().includes((formData.area || '').toLowerCase())
+  );
+
+  // Find currently matched area
+  const matchedArea = areas.find(a => 
+    a.name.toLowerCase() === (formData.area || '').toLowerCase().trim()
+  );
+
+  // Available subareas based on chosen Area
+  const availableSubareas = allSubareas.filter(sa => {
+    if (!formData.area) return true;
+    if (matchedArea && sa.area_id === matchedArea.id) return true;
+    if (sa.area_name && sa.area_name.toLowerCase() === formData.area.toLowerCase().trim()) return true;
+    return (sa.name || '').toLowerCase().includes(formData.area.toLowerCase());
+  }).filter(sa => 
+    !formData.subarea || (sa.name || '').toLowerCase().includes(formData.subarea.toLowerCase())
+  );
 
   const filteredShops = shops.filter(s => 
     s.shop_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.owner_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.area || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.subarea || s.location || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.address || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (s.category || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (s.location || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (s.phone || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -656,19 +944,27 @@ export const ShopMasterModal = ({
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          location: formData.subarea || formData.area || ''
+        })
       });
       if (res.ok) {
         onSuccess();
         setFormData({ 
           shop_name: '', 
           owner_name: '', 
-          location: '', 
+          area: '',
+          subarea: '',
+          address: '',
           phone: '', 
-          credit_limit: 0,
-          category: 'Retailer'
+          credit_limit: 0, 
+          category: 'Retailer' 
         });
         setEditingId(null);
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to save shop");
       }
     } catch (err) {
       console.error("Failed to save shop", err);
@@ -697,165 +993,334 @@ export const ShopMasterModal = ({
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.98 }}
-        className="bg-white w-full h-full rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        className="bg-white w-full h-full max-h-[95vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
       >
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-10">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-600 rounded-lg">
-              <Store size={20} className="text-white" />
+            <div className="p-2.5 bg-indigo-600 rounded-xl text-white shadow-md shadow-indigo-100">
+              <Store size={20} />
             </div>
-            <h3 className="text-lg font-bold text-slate-900">Manage Shops Master Data</h3>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Manage Shops Master Data</h3>
+              <p className="text-xs text-slate-500">Configure shop network, Google search areas, and address records</p>
+            </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-colors shrink-0" title="Close (F3)">
             <X size={20} className="text-slate-500" />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3">
-          <div className="p-6 border-r border-slate-100 lg:col-span-1">
-            <h4 className="text-sm font-bold text-slate-900 mb-4">{editingId ? 'Edit Shop' : 'Add New Shop'}</h4>
+        <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 overflow-hidden">
+          {/* Left Form Column */}
+          <div className="p-6 border-r border-slate-100 lg:col-span-4 overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-bold text-slate-900">{editingId ? 'Edit Shop Master' : 'Add New Shop'}</h4>
+              {editingId && (
+                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md">
+                  Editing #{editingId}
+                </span>
+              )}
+            </div>
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase">Shop Name</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                  Shop Name <span className="text-rose-500">*</span>
+                </label>
                 <input 
                   required
                   type="text" 
                   value={formData.shop_name}
                   onChange={e => setFormData({...formData, shop_name: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all"
                   placeholder="e.g. Al-Madina Mart"
                 />
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase">Owner Name</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                  Owner Name <span className="text-rose-500">*</span>
+                </label>
                 <input 
                   required
                   type="text" 
                   value={formData.owner_name}
                   onChange={e => setFormData({...formData, owner_name: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
-                  placeholder="e.g. Ahmed"
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all"
+                  placeholder="e.g. Ahmed Raza"
                 />
               </div>
+
+              {/* AREA Field - Google Search Style Format */}
               <div className="relative">
-                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase">Sub-area (Location)</label>
-                <div className="relative">
+                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider flex items-center justify-between">
+                  <span>Area <span className="text-rose-500">*</span></span>
+                  <span className="text-[10px] font-semibold text-indigo-600">Google Search format</span>
+                </label>
+                <div className="relative flex items-center">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <MapPin size={16} />
+                    <Search size={16} className="text-indigo-500" />
                   </div>
                   <input 
                     required
                     type="text" 
-                    value={formData.location}
+                    value={formData.area}
                     onChange={e => {
-                      setFormData({...formData, location: e.target.value});
-                      setShowDropdown(true);
+                      const val = e.target.value;
+                      setFormData(prev => ({
+                        ...prev, 
+                        area: val,
+                        subarea: prev.area !== val ? '' : prev.subarea
+                      }));
+                      setShowAreaDropdown(true);
                     }}
-                    onFocus={() => setShowDropdown(true)}
-                    onBlur={() => setTimeout(() => setShowDropdown(false), 250)}
-                    className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all focus:bg-white shadow-sm"
-                    placeholder="Search sub-areas e.g. UC-7..."
+                    onFocus={() => setShowAreaDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowAreaDropdown(false), 250)}
+                    className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-900 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 outline-none transition-all shadow-sm placeholder:text-slate-400"
+                    placeholder="Search or enter area (e.g. Saddar, Gulshan)..."
+                    autoComplete="off"
                   />
-                  {formData.location && (
+                  {formData.area && (
                     <button
                       type="button"
-                      onClick={() => setFormData({...formData, location: ''})}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
+                      onClick={() => setFormData(prev => ({ ...prev, area: '', subarea: '' }))}
+                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600"
                     >
-                      <X size={14} />
+                      <X size={15} />
                     </button>
                   )}
                 </div>
 
-                {showDropdown && filteredSubareas.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 divide-y divide-slate-50">
-                    {filteredSubareas.map(sa => (
-                      <button
-                        key={sa.id}
-                        type="button"
-                        onClick={() => {
-                          setFormData({...formData, location: sa.name});
-                          setShowDropdown(false);
-                        }}
-                        className="w-full px-3 py-2.5 flex items-center gap-2.5 hover:bg-slate-50 text-left transition-all group"
-                      >
-                        <MapPin size={14} className="text-slate-400 group-hover:text-indigo-600 shrink-0" />
-                        <div>
-                          <span className="text-xs font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors block leading-snug">{sa.name}</span>
-                          <span className="text-[9px] text-slate-400 font-mono tracking-wider uppercase block mt-0.5">Sub-area Master Data</span>
-                        </div>
-                      </button>
-                    ))}
+                {/* Dropdown Suggestions */}
+                {showAreaDropdown && (
+                  <div className="absolute left-0 right-0 mt-1 max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 divide-y divide-slate-100">
+                    {filteredAreas.length > 0 ? (
+                      filteredAreas.map(a => {
+                        const subCount = allSubareas.filter(sa => sa.area_id === a.id || sa.area_name?.toLowerCase() === a.name.toLowerCase()).length;
+                        return (
+                          <button
+                            key={a.id}
+                            type="button"
+                            onMouseDown={() => {
+                              setFormData(prev => ({
+                                ...prev,
+                                area: a.name,
+                                subarea: '' // reset subarea to trigger picking from newly selected area
+                              }));
+                              setShowAreaDropdown(false);
+                            }}
+                            className="w-full px-3 py-2 flex items-center justify-between hover:bg-indigo-50/70 text-left transition-colors group"
+                          >
+                            <div className="flex items-center gap-2">
+                              <MapPin size={13} className="text-slate-400 group-hover:text-indigo-600 shrink-0" />
+                              <span className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
+                                {a.name}
+                              </span>
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                              {subCount} sub-areas
+                            </span>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="p-3 text-center">
+                        <p className="text-xs text-slate-500">No preset area found</p>
+                        <button
+                          type="button"
+                          onMouseDown={() => setShowAreaDropdown(false)}
+                          className="mt-1 text-xs font-bold text-indigo-600 hover:underline"
+                        >
+                          Use "{formData.area}" as custom area
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+
+              {/* SUB-AREA Field - Dynamic based on Area */}
+              <div className="relative">
+                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider flex items-center justify-between">
+                  <span>Sub-Area <span className="text-rose-500">*</span></span>
+                  {formData.area ? (
+                    <span className="text-[10px] font-bold text-indigo-600">
+                      {availableSubareas.length} for {formData.area}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-amber-600 font-medium">Select Area first</span>
+                  )}
+                </label>
+
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <MapPin size={15} className={formData.area ? "text-indigo-600" : "text-slate-400"} />
+                  </div>
+                  <input 
+                    required
+                    type="text" 
+                    value={formData.subarea}
+                    onChange={e => {
+                      setFormData({...formData, subarea: e.target.value});
+                      setShowSubareaDropdown(true);
+                    }}
+                    onFocus={() => setShowSubareaDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowSubareaDropdown(false), 250)}
+                    className={cn(
+                      "w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all shadow-sm",
+                      !formData.area && "border-amber-200 bg-amber-50/20"
+                    )}
+                    placeholder={
+                      formData.area 
+                        ? `Sub-area in ${formData.area}...` 
+                        : "Enter Area first to filter..."
+                    }
+                    autoComplete="off"
+                  />
+                  {formData.subarea && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData({...formData, subarea: ''})}
+                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600"
+                    >
+                      <X size={15} />
+                    </button>
+                  )}
+                </div>
+
+                {showSubareaDropdown && (
+                  <div className="absolute left-0 right-0 mt-1 max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 divide-y divide-slate-100">
+                    {availableSubareas.length > 0 ? (
+                      availableSubareas.map(sa => (
+                        <button
+                          key={sa.id}
+                          type="button"
+                          onMouseDown={() => {
+                            setFormData(prev => ({
+                              ...prev,
+                              subarea: sa.name,
+                              area: prev.area || sa.area_name || prev.area
+                            }));
+                            setShowSubareaDropdown(false);
+                          }}
+                          className="w-full px-3 py-2 flex items-center justify-between hover:bg-slate-50 text-left transition-all group"
+                        >
+                          <div className="flex items-center gap-2">
+                            <MapPin size={13} className="text-slate-400 group-hover:text-indigo-600 shrink-0" />
+                            <span className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
+                              {sa.name}
+                            </span>
+                          </div>
+                          {sa.area_name && (
+                            <span className="text-[9px] text-slate-400 font-medium">
+                              {sa.area_name}
+                            </span>
+                          )}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="p-3 text-center">
+                        <p className="text-xs text-slate-500">
+                          {formData.area ? `No sub-areas for "${formData.area}"` : 'Select an area above first'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* ADDRESS Field */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase">Phone</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                  Shop Address / Street Details
+                </label>
+                <div className="relative">
+                  <div className="absolute top-2.5 left-3 flex items-center pointer-events-none text-slate-400">
+                    <Building2 size={15} />
+                  </div>
+                  <textarea 
+                    rows={2}
+                    value={formData.address}
+                    onChange={e => setFormData({...formData, address: e.target.value})}
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all shadow-sm resize-none"
+                    placeholder="e.g. Shop # 12, Main Commercial Market, Block 13-D"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">Phone</label>
                 <input 
                   required
                   type="text" 
                   value={formData.phone}
                   onChange={e => setFormData({...formData, phone: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all"
                   placeholder="e.g. 03001234567"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase">Credit Limit (PKR)</label>
-                <input 
-                  required
-                  type="number" 
-                  value={formData.credit_limit}
-                  onChange={e => setFormData({...formData, credit_limit: parseFloat(e.target.value) || 0})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
-                  placeholder="0"
-                />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">Credit Limit (PKR)</label>
+                  <input 
+                    required
+                    type="number" 
+                    value={formData.credit_limit}
+                    onChange={e => setFormData({...formData, credit_limit: parseFloat(e.target.value) || 0})}
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all font-mono"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">Category</label>
+                  <select 
+                    required
+                    value={formData.category}
+                    onChange={e => setFormData({...formData, category: e.target.value})}
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 focus:bg-white outline-none transition-all"
+                  >
+                    <option value="Retailer">Retailer</option>
+                    <option value="Wholesaler">Wholesaler</option>
+                    <option value="Mart">Mart</option>
+                    <option value="General Store">General Store</option>
+                    <option value="Pharmacy">Pharmacy</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 uppercase">Category</label>
-                <select 
-                  required
-                  value={formData.category}
-                  onChange={e => setFormData({...formData, category: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none transition-all"
-                >
-                  <option value="Retailer">Retailer</option>
-                  <option value="Wholesaler">Wholesaler</option>
-                  <option value="Mart">Mart</option>
-                  <option value="General Store">General Store</option>
-                  <option value="Pharmacy">Pharmacy</option>
-                </select>
-              </div>
-              <div className="flex gap-2 pt-2">
+
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
                 <button 
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-200 transition-colors"
+                  className="px-3.5 py-2 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 transition-colors"
                 >
                   Close (F3)
                 </button>
                 <button 
                   type="submit"
                   disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 shadow-md shadow-indigo-100"
                 >
-                  {isSubmitting ? 'Saving...' : editingId ? 'Update (F2 / CTRL+S)' : 'Add Shop (F2 / CTRL+S)'}
+                  {isSubmitting ? 'Saving...' : editingId ? 'Update Shop (F2 / CTRL+S)' : 'Add Shop (F2 / CTRL+S)'}
                 </button>
                 {editingId && (
                   <button 
                     type="button"
                     onClick={() => {
-                        setEditingId(null);
-                        setFormData({ 
-                      shop_name: '', 
-                      owner_name: '', 
-                      location: '', 
-                      phone: '', 
-                      credit_limit: 0,
-                      category: 'Retailer'
-                    });
+                      setEditingId(null);
+                      setFormData({ 
+                        shop_name: '', 
+                        owner_name: '', 
+                        area: '',
+                        subarea: '',
+                        address: '',
+                        phone: '', 
+                        credit_limit: 0, 
+                        category: 'Retailer' 
+                      });
                     }}
-                    className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-rose-100"
+                    className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors border border-rose-100"
                     title="Cancel Edit"
                   >
                     <X size={16} />
@@ -865,89 +1330,115 @@ export const ShopMasterModal = ({
             </form>
           </div>
 
-          <div className="p-6 bg-slate-50 lg:col-span-2 flex flex-col overflow-hidden max-h-full">
+          {/* Right Table Column */}
+          <div className="p-6 bg-slate-50 lg:col-span-8 flex flex-col overflow-hidden max-h-full">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
               <div>
                 <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Registered Shops ({filteredShops.length})</h4>
-                <p className="text-[10px] text-slate-500">Search and manage customer master data</p>
+                <p className="text-xs text-slate-500">Customer master database with Area & Sub-area mapping</p>
               </div>
-              <div className="relative w-full md:w-64">
+              <div className="relative w-full md:w-72">
                 <input 
                   type="text"
-                  placeholder="Search shops..."
-                  className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none shadow-sm transition-all"
+                  placeholder="Search by shop, area, address..."
+                  className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:border-indigo-600 outline-none shadow-sm transition-all"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
-                <Edit size={16} className="absolute left-3 top-2.5 text-slate-400" />
+                <Search size={15} className="absolute left-3.5 top-2.5 text-slate-400" />
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex-1 overflow-y-auto">
-                <table className="w-full text-left border-collapse">
-                    <thead className="sticky top-0 bg-white z-10">
-                        <tr className="bg-slate-50 border-b border-slate-200">
-                            <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Shop Info</th>
-                            <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Category</th>
-                            <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Location / Contact</th>
-                            <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-right">Credit</th>
-                            <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {filteredShops.map(shop => (
-                            <tr key={shop.id} className="hover:bg-slate-50 transition-colors">
-                                <td className="px-4 py-3">
-                                    <p className="text-sm font-bold text-slate-900">{shop.shop_name}</p>
-                                    <p className="text-[10px] text-slate-500">{shop.owner_name}</p>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <span className={cn(
-                                        "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                                        shop.category === 'Wholesaler' ? "bg-purple-100 text-purple-700" :
-                                        shop.category === 'Mart' ? "bg-amber-100 text-amber-700" :
-                                        "bg-blue-100 text-blue-700"
-                                    )}>
-                                        {shop.category || 'Retailer'}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <p className="text-xs text-slate-700">{shop.location}</p>
-                                    <p className="text-[10px] text-slate-500">{shop.phone}</p>
-                                </td>
-                                <td className="px-4 py-3 text-right text-xs font-bold text-indigo-600">
-                                    {shop.credit_limit}
-                                </td>
-                                <td className="px-4 py-3 text-right">
-                                    <div className="flex justify-end gap-1">
-                                        <button 
-                                            onClick={() => {
-                                                setEditingId(shop.id);
-                                                setFormData({
-                                                    shop_name: shop.shop_name,
-                                                    owner_name: shop.owner_name,
-                                                    location: shop.location,
-                                                    phone: shop.phone,
-                                                    credit_limit: shop.credit_limit,
-                                                    category: shop.category || 'Retailer'
-                                                });
-                                            }}
-                                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                        >
-                                            <Edit size={14} />
-                                        </button>
-                                        <button 
-                                            onClick={() => handleDelete(shop.id)}
-                                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex-1 overflow-y-auto shadow-sm">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 bg-white z-10">
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Shop & Owner</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Category</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Area & Sub-Area</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Address & Contact</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-right">Credit (PKR)</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredShops.map(shop => (
+                    <tr key={shop.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <p className="text-xs font-bold text-slate-900">{shop.shop_name}</p>
+                        <p className="text-[10px] text-slate-500">{shop.owner_name}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase",
+                          shop.category === 'Wholesaler' ? "bg-purple-100 text-purple-700" :
+                          shop.category === 'Mart' ? "bg-amber-100 text-amber-700" :
+                          shop.category === 'Pharmacy' ? "bg-emerald-100 text-emerald-700" :
+                          "bg-blue-100 text-blue-700"
+                        )}>
+                          {shop.category || 'Retailer'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {shop.area && (
+                          <span className="inline-block px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[10px] font-bold mb-0.5">
+                            {shop.area}
+                          </span>
+                        )}
+                        <p className="text-xs font-semibold text-slate-700">{shop.subarea || shop.location}</p>
+                      </td>
+                      <td className="px-4 py-3 max-w-[200px]">
+                        {shop.address ? (
+                          <p className="text-[11px] text-slate-700 truncate" title={shop.address}>{shop.address}</p>
+                        ) : (
+                          <p className="text-[10px] text-slate-400 italic">No street address</p>
+                        )}
+                        <p className="text-[10px] font-medium text-slate-500">{shop.phone}</p>
+                      </td>
+                      <td className="px-4 py-3 text-right text-xs font-mono font-bold text-indigo-600">
+                        {shop.credit_limit?.toLocaleString() || 0}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex justify-end gap-1">
+                          <button 
+                            onClick={() => {
+                              setEditingId(shop.id);
+                              setFormData({
+                                shop_name: shop.shop_name,
+                                owner_name: shop.owner_name,
+                                area: shop.area || '',
+                                subarea: shop.subarea || shop.location || '',
+                                address: shop.address || '',
+                                phone: shop.phone,
+                                credit_limit: shop.credit_limit || 0,
+                                category: shop.category || 'Retailer'
+                              });
+                            }}
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            title="Edit Shop"
+                          >
+                            <Edit size={14} />
+                          </button>
+                          <button 
+                            onClick={() => handleDelete(shop.id)}
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Delete Shop"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredShops.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-xs text-slate-400">
+                        No shops match the search query
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -1632,7 +2123,3 @@ export const ProductMasterDataModal = ({
         </div>
     );
 };
-
-function cn(...classes: (string | boolean | undefined)[]) {
-  return classes.filter(Boolean).join(' ');
-}

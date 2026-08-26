@@ -114,7 +114,10 @@ try {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         shop_name TEXT NOT NULL UNIQUE,
         owner_name TEXT NOT NULL,
+        area TEXT DEFAULT '',
+        subarea TEXT DEFAULT '',
         location TEXT NOT NULL,
+        address TEXT DEFAULT '',
         phone TEXT NOT NULL UNIQUE,
         credit_limit REAL DEFAULT 0,
         category TEXT DEFAULT 'Retailer',
@@ -458,7 +461,7 @@ try {
     console.warn("Deliveries shop_id migration/backfill error:", e);
   }
 
-  // Migration for shops category
+  // Migration for shops category, area, subarea, and address
   try {
     db.prepare("SELECT category FROM shops LIMIT 1").get();
   } catch (err) {
@@ -468,6 +471,27 @@ try {
       // ignore
     }
   }
+  try { db.exec("ALTER TABLE shops ADD COLUMN area TEXT DEFAULT ''"); } catch(e) {}
+  try { db.exec("ALTER TABLE shops ADD COLUMN subarea TEXT DEFAULT ''"); } catch(e) {}
+  try { db.exec("ALTER TABLE shops ADD COLUMN address TEXT DEFAULT ''"); } catch(e) {}
+  try {
+    db.exec(`
+      UPDATE shops 
+      SET subarea = location 
+      WHERE (subarea IS NULL OR subarea = '') AND location IS NOT NULL AND location != '';
+    `);
+    db.exec(`
+      UPDATE shops
+      SET area = (
+        SELECT a.name 
+        FROM subareas sa 
+        JOIN areas a ON sa.area_id = a.id 
+        WHERE sa.name = shops.subarea OR sa.name = shops.location
+        LIMIT 1
+      )
+      WHERE (area IS NULL OR area = '') AND (subarea IS NOT NULL AND subarea != '');
+    `);
+  } catch (e) {}
 
   // Synchronize invoice items and invoice totals to ensure mathematical consistency
   try {
@@ -621,17 +645,66 @@ try {
     console.error("Distributor seeding error:", e);
   }
 
-  // Backfill existing records to distributor_id = 1 (Karachi Central) where distributor_id is NULL
+  // Backfill existing records to distributor_id = 1 (Karachi Central / DST-001) where distributor_id is NULL
+  // and delete all transactional data for distributors other than DST-001
   try {
-    for (const tbl of tablesForDistributor) {
-      if (tbl !== 'users') {
-        db.exec(`UPDATE ${tbl} SET distributor_id = 1 WHERE distributor_id IS NULL;`);
+    const dst001Row = db.prepare("SELECT id FROM distributors WHERE code = 'DST-001' LIMIT 1").get() as any;
+    const dst001Id = dst001Row ? dst001Row.id : 1;
+
+    db.transaction(() => {
+      // 1. Backfill master and transactional records with NULL distributor_id to DST-001
+      for (const tbl of tablesForDistributor) {
+        if (tbl !== 'users') {
+          db.exec(`UPDATE ${tbl} SET distributor_id = ${dst001Id} WHERE distributor_id IS NULL;`);
+        }
       }
-    }
-    // Set non-admin users to distributor_id = 1 if null
-    db.exec(`UPDATE users SET distributor_id = 1 WHERE role != 'admin' AND distributor_id IS NULL;`);
+      // Set non-admin users with NULL distributor_id to DST-001
+      db.exec(`UPDATE users SET distributor_id = ${dst001Id} WHERE role NOT IN ('admin', 'super_admin') AND distributor_id IS NULL;`);
+
+      // 2. Delete all transactional data for any distributor other than DST-001
+      // Sales returns
+      db.exec(`DELETE FROM sales_return_items WHERE sales_return_id IN (SELECT id FROM sales_returns WHERE distributor_id != ${dst001Id});`);
+      db.exec(`DELETE FROM sales_returns WHERE distributor_id != ${dst001Id};`);
+
+      // Purchase returns
+      db.exec(`DELETE FROM purchase_return_items WHERE purchase_return_id IN (SELECT id FROM purchase_returns WHERE distributor_id != ${dst001Id});`);
+      db.exec(`DELETE FROM purchase_returns WHERE distributor_id != ${dst001Id};`);
+
+      // Invoices
+      db.exec(`DELETE FROM invoice_items WHERE invoice_id IN (SELECT id FROM invoices WHERE distributor_id != ${dst001Id});`);
+      db.exec(`DELETE FROM invoices WHERE distributor_id != ${dst001Id};`);
+
+      // Deliveries
+      db.exec(`DELETE FROM delivery_items WHERE delivery_id IN (SELECT id FROM deliveries WHERE distributor_id != ${dst001Id});`);
+      db.exec(`DELETE FROM deliveries WHERE distributor_id != ${dst001Id};`);
+
+      // Load plans
+      db.exec(`DELETE FROM load_plan_items WHERE plan_id IN (SELECT id FROM load_plans WHERE distributor_id != ${dst001Id});`);
+      db.exec(`DELETE FROM load_plans WHERE distributor_id != ${dst001Id};`);
+
+      // Orders
+      db.exec(`DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE distributor_id != ${dst001Id});`);
+      db.exec(`DELETE FROM orders WHERE distributor_id != ${dst001Id};`);
+
+      // Returns
+      db.exec(`DELETE FROM return_items WHERE return_id IN (SELECT id FROM returns WHERE distributor_id != ${dst001Id});`);
+      db.exec(`DELETE FROM returns WHERE distributor_id != ${dst001Id};`);
+
+      // Purchases
+      db.exec(`DELETE FROM purchase_items WHERE purchase_id IN (SELECT id FROM purchases WHERE distributor_id != ${dst001Id});`);
+      db.exec(`DELETE FROM purchases WHERE distributor_id != ${dst001Id};`);
+
+      // Payments
+      db.exec(`DELETE FROM payments WHERE distributor_id != ${dst001Id};`);
+
+      // Product batches linked to deleted purchases
+      db.exec(`DELETE FROM product_batches WHERE purchase_id IS NOT NULL AND purchase_id NOT IN (SELECT id FROM purchases);`);
+
+      // Client ledger for shops of distributors other than DST-001
+      db.exec(`DELETE FROM client_ledger WHERE shop_id IN (SELECT id FROM shops WHERE distributor_id != ${dst001Id});`);
+    })();
   } catch (e) {
-    console.warn("Distributor backfill error:", e);
+    console.warn("Distributor backfill/cleanup error:", e);
   }
 
   // Backfill initial MAP and Inventory Value for existing products
@@ -1241,6 +1314,8 @@ try {
       db.prepare("INSERT OR IGNORE INTO suppliers (name, contact_person, phone, address) VALUES (?, ?, ?, ?)").run("MSK Company", "Saleem Ahmed", "03444444444", "SITE Area, Karachi");
       db.prepare("INSERT OR IGNORE INTO order_bookers (name, father_name, cell_no, cnic_no, joining_date) VALUES (?, ?, ?, ?, ?)").run("Zeeshan Ahmed", "Ahmed Khan", "03001234567", "42101-1111111-1", "2024-01-01");
       db.prepare("INSERT OR IGNORE INTO salesmen (name, father_name, cell_no, cnic_no, joining_date) VALUES (?, ?, ?, ?, ?)").run("Asif Ali", "Ali Ahmed", "03004445556", "42101-7654321-2", "2024-02-10");
+      db.prepare("INSERT OR IGNORE INTO drivers (name, father_name, cell_no, cnic_no, joining_date, distributor_id) VALUES (?, ?, ?, ?, ?, 1)").run("Abdul Ghaffar", "Ghaffar Khan", "03451122334", "42101-9988112-1", "2024-01-15");
+      db.prepare("INSERT OR IGNORE INTO drivers (name, father_name, cell_no, cnic_no, joining_date, distributor_id) VALUES (?, ?, ?, ?, ?, 1)").run("Mohammad Aslam", "Aslam Pervez", "03452233445", "42101-8877223-2", "2024-02-01");
     })();
   }
 
@@ -1268,7 +1343,7 @@ try {
         ];
         for (const item of pItems) {
           const pTotal = item.qty * item.price;
-          const pId = db.prepare("INSERT INTO purchases (supplier_id, total_amount, status) VALUES (?, ?, ?)").run(supplierRes.id, pTotal, 'received').lastInsertRowid;
+          const pId = db.prepare("INSERT INTO purchases (supplier_id, total_amount, status, distributor_id) VALUES (?, ?, ?, 1)").run(supplierRes.id, pTotal, 'received').lastInsertRowid;
           db.prepare("INSERT INTO purchase_items (purchase_id, product_id, quantity, price) VALUES (?, ?, ?, ?)").run(pId, item.pid, item.qty, item.price);
           db.prepare("INSERT INTO product_batches (product_id, purchase_id, quantity, remaining_quantity, purchase_price) VALUES (?, ?, ?, ?, ?)").run(item.pid, pId, item.qty, item.qty, item.price);
           db.prepare("UPDATE products SET stock_quantity = stock_quantity + ? WHERE product_id = ?").run(item.qty, item.pid);
@@ -1284,9 +1359,9 @@ try {
         ];
         for (const item of dItems) {
           const dTotal = item.qty * item.price;
-          const oId = db.prepare("INSERT INTO orders (shop_id, order_booker_id, total_amount, status) VALUES (?, ?, ?, ?)").run(shopRes.id, bookerRes.id, dTotal, 'delivered').lastInsertRowid;
+          const oId = db.prepare("INSERT INTO orders (shop_id, order_booker_id, total_amount, status, distributor_id) VALUES (?, ?, ?, ?, 1)").run(shopRes.id, bookerRes.id, dTotal, 'delivered').lastInsertRowid;
           const oiId = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, ?, ?, ?, ?)").run(oId, item.pid, item.qty, item.price, 'delivered').lastInsertRowid;
-          const delId = db.prepare("INSERT INTO deliveries (order_id, shop_id, salesman_id, total_amount, status) VALUES (?, ?, ?, ?, ?)").run(oId, shopRes.id, salesmanRes.id, dTotal, 'completed').lastInsertRowid;
+          const delId = db.prepare("INSERT INTO deliveries (order_id, shop_id, salesman_id, total_amount, status, distributor_id) VALUES (?, ?, ?, ?, ?, 1)").run(oId, shopRes.id, salesmanRes.id, dTotal, 'completed').lastInsertRowid;
           db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oiId, item.pid, item.qty, item.price);
           
           db.prepare("UPDATE products SET stock_quantity = stock_quantity - ? WHERE product_id = ?").run(item.qty, item.pid);
@@ -1303,7 +1378,7 @@ try {
         for (const r of activeDels) {
           const rQty = 1;
           const rTotal = rQty * r.price;
-          const retId = db.prepare("INSERT INTO returns (shop_id, total_amount, status) VALUES (?, ?, ?)").run(r.shop_id, rTotal, 'completed').lastInsertRowid;
+          const retId = db.prepare("INSERT INTO returns (shop_id, total_amount, status, distributor_id) VALUES (?, ?, ?, 1)").run(r.shop_id, rTotal, 'completed').lastInsertRowid;
           db.prepare("INSERT INTO return_items (return_id, delivery_id, delivery_item_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, ?, ?)").run(retId, r.del_id, r.di_id, r.product_id, rQty, r.price);
           db.prepare("UPDATE products SET stock_quantity = stock_quantity + ? WHERE product_id = ?").run(rQty, r.product_id);
         }
@@ -1594,18 +1669,18 @@ function seedAreaWiseReportData() {
           }
 
           const oId = db.prepare(`
-            INSERT INTO orders (shop_id, order_booker_id, order_date, estimated_delivery_date, total_amount, status)
-            VALUES (?, ?, '2021-06-16T10:00:00.000Z', '2021-06-16T18:00:00.000Z', ?, 'delivered')
+            INSERT INTO orders (shop_id, order_booker_id, order_date, estimated_delivery_date, total_amount, status, distributor_id)
+            VALUES (?, ?, '2021-06-16T10:00:00.000Z', '2021-06-16T18:00:00.000Z', ?, 'delivered', 1)
           `).run(sId, bId, orderTotal).lastInsertRowid;
 
           const delId = db.prepare(`
-            INSERT INTO deliveries (order_id, shop_id, salesman_id, delivery_date, status, total_amount)
-            VALUES (?, ?, ?, '2021-06-16T14:00:00.000Z', 'completed', ?)
+            INSERT INTO deliveries (order_id, shop_id, salesman_id, delivery_date, status, total_amount, distributor_id)
+            VALUES (?, ?, ?, '2021-06-16T14:00:00.000Z', 'completed', ?, 1)
           `).run(oId, sId, salesmanId, orderTotal).lastInsertRowid;
 
           const invId = db.prepare(`
-            INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, status)
-            VALUES (?, '2021-06-16T15:00:00.000Z', ?, 0, 0, ?, 'paid')
+            INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, status, distributor_id)
+            VALUES (?, '2021-06-16T15:00:00.000Z', ?, 0, 0, ?, 'paid', 1)
           `).run(sId, orderTotal, orderTotal).lastInsertRowid;
 
           db.prepare("UPDATE deliveries SET invoice_id = ?, status = 'billed' WHERE id = ?").run(invId, delId);
@@ -1695,15 +1770,15 @@ function seedSouthZoneData() {
 
       // 6. Shops for South Zone (Distinct South Karachi areas)
       const insertShop = db.prepare(`
-        INSERT OR IGNORE INTO shops (shop_name, owner_name, location, phone, credit_limit, category, distributor_id)
-        VALUES (?, ?, ?, ?, ?, ?, 2)
+        INSERT OR IGNORE INTO shops (shop_name, owner_name, area, subarea, location, address, phone, credit_limit, category, distributor_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
       `);
-      insertShop.run('South Super Market', 'Irfan Merchant', 'Saddar Wholesale Market, Karachi', '03008881101', 80000, 'Wholesaler');
-      insertShop.run('Clifton Mart & Grocery', 'Sikandar Ali', 'Block 2, Clifton, Karachi', '03008881102', 120000, 'Retailer');
-      insertShop.run('Kharadar Cash & Carry', 'Haji Abdul Sattar', 'Near Bolton Market, Kharadar, Karachi', '03008881103', 150000, 'Wholesaler');
-      insertShop.run('Burns Road Store', 'Naveed Sheikh', 'Burns Road Food Street Area, Karachi', '03008881104', 60000, 'Retailer');
-      insertShop.run('Defence Mini Mart', 'Kamran Zubair', 'Phase 5, DHA, Karachi', '03008881105', 100000, 'Modern Trade');
-      insertShop.run('Zamzama Express Shop', 'Junaid Siddiqui', 'Zamzama Commercial, DHA, Karachi', '03008881106', 75000, 'Retailer');
+      insertShop.run('South Super Market', 'Irfan Merchant', 'Saddar', 'Saddar Wholesale', 'Saddar Wholesale', 'Shop 12-14, Wholesale Market, Saddar', '03008881101', 80000, 'Wholesaler');
+      insertShop.run('Clifton Mart & Grocery', 'Sikandar Ali', 'Clifton', 'Block 2', 'Block 2', 'Shop 4, Block 2, Clifton', '03008881102', 120000, 'Retailer');
+      insertShop.run('Kharadar Cash & Carry', 'Haji Abdul Sattar', 'Kharadar', 'Bolton Market', 'Bolton Market', 'Near Bolton Market, Kharadar', '03008881103', 150000, 'Wholesaler');
+      insertShop.run('Burns Road Store', 'Naveed Sheikh', 'Burns Road', 'Food Street', 'Food Street', 'Shop 8, Burns Road Food Street', '03008881104', 60000, 'Retailer');
+      insertShop.run('Defence Mini Mart', 'Kamran Zubair', 'DHA', 'Phase 5 Commercial', 'Phase 5 Commercial', 'Plot 22-C, Phase 5, DHA', '03008881105', 100000, 'Modern Trade');
+      insertShop.run('Zamzama Express Shop', 'Junaid Siddiqui', 'DHA', 'Zamzama Commercial', 'Zamzama Commercial', 'Shop 3, Zamzama Lane 4, DHA', '03008881106', 75000, 'Retailer');
 
       // 7. Products for South Zone
       const insertProduct = db.prepare(`
@@ -1718,6 +1793,80 @@ function seedSouthZoneData() {
       insertProduct.run('S000000006', 'Energy Drink 250ml Can', 'Roar Energy', '00001', 110, 130, 160, 350, 'EA', 250, 'ML', 50, 100, 38500, 110);
       insertProduct.run('S000000007', 'Chili Garlic Sauce 800g', 'Shangrila', '00001', 320, 355, 390, 95, 'EA', 800, 'GR', 15, 30, 30400, 320);
 
+      // Batches for South Zone
+      const sProds = db.prepare("SELECT * FROM products WHERE distributor_id = 2").all() as any[];
+      for (const p of sProds) {
+        const existing = db.prepare("SELECT id FROM product_batches WHERE product_id = ?").get(p.product_id);
+        if (!existing) {
+          db.prepare("INSERT INTO product_batches (product_id, quantity, remaining_quantity, purchase_price) VALUES (?, ?, ?, ?)").run(
+            p.product_id, p.stock_quantity, p.stock_quantity, p.purchase_price
+          );
+        }
+      }
+
+      // Seed South Zone Orders if none exist
+      const sOrdersCount = (db.prepare("SELECT COUNT(*) as count FROM orders WHERE distributor_id = 2").get() as any)?.count || 0;
+      if (sOrdersCount === 0) {
+        const sShops = db.prepare("SELECT id FROM shops WHERE distributor_id = 2").all() as any[];
+        const sBookers = db.prepare("SELECT id FROM order_bookers WHERE distributor_id = 2").all() as any[];
+        const sSalesmen = db.prepare("SELECT id FROM salesmen WHERE distributor_id = 2").all() as any[];
+
+        if (sShops.length > 0 && sBookers.length > 0 && sProds.length > 0) {
+          const dates = [
+            new Date(Date.now() - 3 * 86400000).toISOString().split("T")[0],
+            new Date(Date.now() - 1 * 86400000).toISOString().split("T")[0],
+            new Date().toISOString().split("T")[0]
+          ];
+
+          for (let i = 0; i < 3; i++) {
+            const shop = sShops[i % sShops.length];
+            const booker = sBookers[i % sBookers.length];
+            const p1 = sProds[i % sProds.length];
+            const p2 = sProds[(i + 1) % sProds.length];
+            const qty1 = 5 + i * 2;
+            const qty2 = 4 + i;
+            const total = (qty1 * p1.trade_price) + (qty2 * p2.trade_price);
+            const orderDate = dates[i];
+
+            const orderId = db.prepare(`
+              INSERT INTO orders (shop_id, order_booker_id, order_date, status, total_amount, distributor_id, is_cancelled)
+              VALUES (?, ?, ?, 'delivered', ?, 2, '')
+            `).run(shop.id, booker.id, orderDate, total).lastInsertRowid;
+
+            const oi1 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, ?, ?, ?, 'delivered')").run(orderId, p1.product_id, qty1, p1.trade_price).lastInsertRowid;
+            const oi2 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, ?, ?, ?, 'delivered')").run(orderId, p2.product_id, qty2, p2.trade_price).lastInsertRowid;
+
+            const delId = db.prepare(`
+              INSERT INTO deliveries (order_id, shop_id, salesman_id, delivery_date, status, total_amount, distributor_id)
+              VALUES (?, ?, ?, ?, 'delivered', ?, 2)
+            `).run(orderId, shop.id, sSalesmen[0]?.id || 1, orderDate, total).lastInsertRowid;
+
+            db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oi1, p1.product_id, qty1, p1.trade_price);
+            db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oi2, p2.product_id, qty2, p2.trade_price);
+
+            const invId = db.prepare(`
+              INSERT INTO invoices (invoice_number, delivery_id, shop_id, total_amount, status, created_at, distributor_id)
+              VALUES (?, ?, ?, ?, 'PAID', ?, 2)
+            `).run(`INV-SZ-${orderId}`, delId, shop.id, total, orderDate).lastInsertRowid;
+
+            db.prepare("UPDATE deliveries SET invoice_id = ? WHERE id = ?").run(invId, delId);
+            db.prepare("INSERT INTO invoice_items (invoice_id, product_id, quantity, price, total) VALUES (?, ?, ?, ?, ?)").run(invId, p1.product_id, qty1, p1.trade_price, qty1 * p1.trade_price);
+            db.prepare("INSERT INTO invoice_items (invoice_id, product_id, quantity, price, total) VALUES (?, ?, ?, ?, ?)").run(invId, p2.product_id, qty2, p2.trade_price, qty2 * p2.trade_price);
+          }
+
+          // 1 Pending Order
+          const pendingShop = sShops[3 % sShops.length];
+          const pProd = sProds[0];
+          const pTotal = 10 * pProd.trade_price;
+          const pendingOrdId = db.prepare(`
+            INSERT INTO orders (shop_id, order_booker_id, order_date, status, total_amount, distributor_id, is_cancelled)
+            VALUES (?, ?, date('now'), 'pending', ?, 2, '')
+          `).run(pendingShop.id, sBookers[0].id, pTotal).lastInsertRowid;
+
+          db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, ?, ?, ?, 'pending')").run(pendingOrdId, pProd.product_id, 10, pProd.trade_price);
+        }
+      }
+
       // 8. Suppliers
       const insertSupp = db.prepare(`
         INSERT OR IGNORE INTO suppliers (name, contact_person, phone, address)
@@ -1725,167 +1874,141 @@ function seedSouthZoneData() {
       `);
       insertSupp.run('South Edible Oils & Ghee Ltd', 'Tariq Mehmood', '03009988112', 'Korangi Creek Industrial Area, Karachi');
       insertSupp.run('National Foods South Depot', 'Shahid Rauf', '03009988113', 'Port Qasim Hub, Karachi');
+    })();
+    console.log("[Database] South Zone master data verified and ready!");
+  } catch (err) {
+    console.error("[Database Error] Seeding South Zone master data failed:", err);
+  }
+}
 
-      const s1 = db.prepare("SELECT id FROM suppliers WHERE name = 'South Edible Oils & Ghee Ltd'").get() as any;
-      const s2 = db.prepare("SELECT id FROM suppliers WHERE name = 'National Foods South Depot'").get() as any;
-      const supp1Id = s1 ? s1.id : 1;
-      const supp2Id = s2 ? s2.id : 1;
+function seedNorthZoneData() {
+  try {
+    db.transaction(() => {
+      // 1. Ensure North Region distributor master exists
+      db.prepare(`
+        INSERT OR IGNORE INTO distributors (id, code, name, contact_person, phone, email, address, city, ntn_number, strn_number, status)
+        VALUES (3, 'DST-003', 'North Region Wholesale & Distribution', 'Farhan Ali', '021-36789012', 'sales@northregion.pk', 'Plot 45, Sector 11-A, North Karachi', 'Karachi', '3456789-0', '3277876123458', 'ACTIVE')
+      `).run();
 
-      // 9. Purchases for South Zone
-      const checkPurchases = db.prepare("SELECT COUNT(*) as count FROM purchases WHERE distributor_id = 2").get() as { count: number };
-      if (checkPurchases.count === 0) {
-        const p1 = db.prepare(`
-          INSERT INTO purchases (supplier_id, purchase_date, status, total_amount, distributor_id)
-          VALUES (?, '2026-08-10 10:00:00', 'received', 78000, 2)
-        `).run(supp1Id);
-        db.prepare(`
-          INSERT INTO purchase_items (purchase_id, product_id, quantity, price, supplier_batch_no, storage_location)
-          VALUES (?, 'S000000001', 150, 520, 'SZ-OIL-B101', 'Warehouse South Rack A1')
-        `).run(p1.lastInsertRowid);
+      // 2. Users for North Region
+      const insertUser = db.prepare(`
+        INSERT OR IGNORE INTO users (name, role, phone, password, distributor_id)
+        VALUES (?, ?, ?, ?, 3)
+      `);
+      insertUser.run('Farhan Ali', 'salesman', '03005559900', 'north123');
+      insertUser.run('Kashif Raza', 'order_booker', '03005559911', 'north123');
 
-        const p2 = db.prepare(`
-          INSERT INTO purchases (supplier_id, purchase_date, status, total_amount, distributor_id)
-          VALUES (?, '2026-08-12 11:30:00', 'received', 136550, 2)
-        `).run(supp2Id);
-        db.prepare(`
-          INSERT INTO purchase_items (purchase_id, product_id, quantity, price, supplier_batch_no, storage_location)
-          VALUES (?, 'S000000002', 85, 680, 'SZ-TEA-B202', 'Warehouse South Rack B2')
-        `).run(p2.lastInsertRowid);
-        db.prepare(`
-          INSERT INTO purchase_items (purchase_id, product_id, quantity, price, supplier_batch_no, storage_location)
-          VALUES (?, 'S000000004', 45, 1750, 'SZ-RICE-B303', 'Warehouse South Bay 1')
-        `).run(p2.lastInsertRowid);
+      // 3. Order Bookers for North Region
+      const insertBooker = db.prepare(`
+        INSERT OR IGNORE INTO order_bookers (name, father_name, cell_no, cnic_no, joining_date, distributor_id)
+        VALUES (?, ?, ?, ?, ?, 3)
+      `);
+      insertBooker.run('Kashif Raza', 'Raza Muhammad', '03005559911', '42101-2233445-1', '2024-04-01');
+      insertBooker.run('Asif Munir', 'Munir Ahmed', '03335559922', '42101-3344556-2', '2024-06-15');
+
+      // 4. Salesmen for North Region
+      const insertSalesman = db.prepare(`
+        INSERT OR IGNORE INTO salesmen (name, father_name, cell_no, cnic_no, joining_date, distributor_id)
+        VALUES (?, ?, ?, ?, ?, 3)
+      `);
+      insertSalesman.run('Farhan Ali', 'Ali Muhammad', '03005559900', '42101-4455667-3', '2024-03-01');
+      insertSalesman.run('Zubair Ahmed', 'Ahmed Khan', '03125559933', '42101-5566778-4', '2024-05-10');
+
+      // 5. Drivers for North Region
+      const insertDriver = db.prepare(`
+        INSERT OR IGNORE INTO drivers (name, father_name, cell_no, cnic_no, joining_date, distributor_id)
+        VALUES (?, ?, ?, ?, ?, 3)
+      `);
+      insertDriver.run('Muhammad Anwar', 'Anwar Ali', '03455559944', '42101-6677889-5', '2024-02-15');
+
+      // 6. Shops for North Region
+      const insertShop = db.prepare(`
+        INSERT OR IGNORE INTO shops (shop_name, owner_name, area, subarea, location, address, phone, credit_limit, category, distributor_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 3)
+      `);
+      insertShop.run('North Star Supermarket', 'Tariq Javed', 'North Karachi', 'Sector 11-A', 'Sector 11-A', 'Plot 12, Main North Karachi Road', '03007771101', 90000, 'Supermarket');
+      insertShop.run('Surjani Wholesale Mart', 'Muhammad Saleem', 'Surjani Town', 'Sector 4', 'Sector 4', 'Surjani Main Chowk', '03007771102', 110000, 'Wholesaler');
+      insertShop.run('Nagan Chowrangi Store', 'Imran Malik', 'Buffer Zone', 'Sector 15-A', 'Sector 15-A', 'Near Nagan Chowrangi, Buffer Zone', '03007771103', 70000, 'Retailer');
+      insertShop.run('New Karachi General Store', 'Owais Khan', 'New Karachi', 'Sector 5-D', 'Sector 5-D', 'Main Market, New Karachi', '03007771104', 85000, 'Retailer');
+      insertShop.run('Nazimabad Central Mart', 'Faisal Qureshi', 'North Nazimabad', 'Block H', 'Block H', 'Near Hydri Market, North Nazimabad', '03007771105', 130000, 'Modern Trade');
+
+      // 7. Products for North Region
+      const insertProduct = db.prepare(`
+        INSERT OR IGNORE INTO products (product_id, product_name, brand, material_group_id, purchase_price, trade_price, retail_price, stock_quantity, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, inventory_value, moving_average_price, distributor_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3)
+      `);
+      insertProduct.run('N000000001', 'Pure Desi Ghee 1kg Tin', 'Pak Pure', '00001', 1450, 1600, 1750, 80, 'EA', 1, 'KG', 15, 30, 116000, 1450);
+      insertProduct.run('N000000002', 'Premium Wheat Flour 10kg', 'Bake Parlor', '00002', 1200, 1320, 1400, 120, 'EA', 10, 'KG', 25, 50, 144000, 1200);
+      insertProduct.run('N000000003', 'Biryani Spices Mix 200g Pack', 'Mehran Spices', '00001', 190, 215, 240, 250, 'PK', 200, 'GR', 40, 80, 47500, 190);
+      insertProduct.run('N000000004', 'Natural Mineral Water 1.5L (Case of 6)', 'Aquafina', '00001', 360, 410, 480, 180, 'CS', 6, 'BTL', 30, 60, 64800, 360);
+      insertProduct.run('N000000005', 'Super Kernel Basmati 5kg Bag', 'Al-Karam', '00002', 1650, 1800, 1950, 65, 'PK', 5, 'KG', 15, 30, 107250, 1650);
+
+      // Batches for North Region
+      const nProds = db.prepare("SELECT * FROM products WHERE distributor_id = 3").all() as any[];
+      for (const p of nProds) {
+        const existing = db.prepare("SELECT id FROM product_batches WHERE product_id = ?").get(p.product_id);
+        if (!existing) {
+          db.prepare("INSERT INTO product_batches (product_id, quantity, remaining_quantity, purchase_price) VALUES (?, ?, ?, ?)").run(
+            p.product_id, p.stock_quantity, p.stock_quantity, p.purchase_price
+          );
+        }
       }
 
-      // 10. Orders for South Zone
-      const checkOrders = db.prepare("SELECT COUNT(*) as count FROM orders WHERE distributor_id = 2").get() as { count: number };
-      if (checkOrders.count === 0) {
-        const shopList = db.prepare("SELECT id, shop_name FROM shops WHERE distributor_id = 2").all() as any[];
-        const shopMap: Record<string, number> = {};
-        shopList.forEach(s => { shopMap[s.shop_name] = s.id; });
+      // Seed North Region Orders if none exist
+      const nOrdersCount = (db.prepare("SELECT COUNT(*) as count FROM orders WHERE distributor_id = 3").get() as any)?.count || 0;
+      if (nOrdersCount === 0) {
+        const nShops = db.prepare("SELECT id FROM shops WHERE distributor_id = 3").all() as any[];
+        const nBookers = db.prepare("SELECT id FROM order_bookers WHERE distributor_id = 3").all() as any[];
+        const nSalesmen = db.prepare("SELECT id FROM salesmen WHERE distributor_id = 3").all() as any[];
 
-        const bookers = db.prepare("SELECT id, name FROM order_bookers WHERE distributor_id = 2").all() as any[];
-        const rashidId = bookers.find(b => b.name === 'Rashid Mehmood')?.id || bookers[0]?.id || 1;
-        const waqasId = bookers.find(b => b.name === 'Waqas Siddiqui')?.id || bookers[0]?.id || 1;
+        if (nShops.length > 0 && nBookers.length > 0 && nProds.length > 0) {
+          const dates = [
+            new Date(Date.now() - 4 * 86400000).toISOString().split("T")[0],
+            new Date(Date.now() - 2 * 86400000).toISOString().split("T")[0],
+            new Date().toISOString().split("T")[0]
+          ];
 
-        const salesmenList = db.prepare("SELECT id, name FROM salesmen WHERE distributor_id = 2").all() as any[];
-        const hamzaId = salesmenList.find(s => s.name === 'Hamza Farooq')?.id || salesmenList[0]?.id || 1;
-        const danishId = salesmenList.find(s => s.name === 'Danish Qureshi')?.id || salesmenList[0]?.id || 1;
+          for (let i = 0; i < 3; i++) {
+            const shop = nShops[i % nShops.length];
+            const booker = nBookers[i % nBookers.length];
+            const p1 = nProds[i % nProds.length];
+            const p2 = nProds[(i + 1) % nProds.length];
+            const qty1 = 6 + i * 3;
+            const qty2 = 4 + i * 2;
+            const total = (qty1 * p1.trade_price) + (qty2 * p2.trade_price);
+            const orderDate = dates[i];
 
-        const driversList = db.prepare("SELECT id, name FROM drivers WHERE distributor_id = 2").all() as any[];
-        const ghulamId = driversList.find(d => d.name === 'Ghulam Rasool')?.id || driversList[0]?.id || 1;
+            const orderId = db.prepare(`
+              INSERT INTO orders (shop_id, order_booker_id, order_date, status, total_amount, distributor_id, is_cancelled)
+              VALUES (?, ?, ?, 'delivered', ?, 3, '')
+            `).run(shop.id, booker.id, orderDate, total).lastInsertRowid;
 
-        // Order 1: South Super Market (delivered)
-        const o1 = db.prepare(`
-          INSERT INTO orders (shop_id, order_booker_id, order_date, status, total_amount, distributor_id)
-          VALUES (?, ?, '2026-08-14 09:30:00', 'delivered', 24630, 2)
-        `).run(shopMap['South Super Market'] || 1, rashidId);
-        const o1Id = o1.lastInsertRowid;
-        const oi1 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000001', 20, 560, 'Delivered')").run(o1Id);
-        const oi2 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000002', 15, 730, 'Delivered')").run(o1Id);
-        const oi3 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000003', 8, 310, 'Delivered')").run(o1Id);
+            const oi1 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, ?, ?, ?, 'delivered')").run(orderId, p1.product_id, qty1, p1.trade_price).lastInsertRowid;
+            const oi2 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, ?, ?, ?, 'delivered')").run(orderId, p2.product_id, qty2, p2.trade_price).lastInsertRowid;
 
-        // Order 2: Clifton Mart & Grocery (delivered)
-        const o2 = db.prepare(`
-          INSERT INTO orders (shop_id, order_booker_id, order_date, status, total_amount, distributor_id)
-          VALUES (?, ?, '2026-08-15 10:15:00', 'delivered', 31000, 2)
-        `).run(shopMap['Clifton Mart & Grocery'] || 2, rashidId);
-        const o2Id = o2.lastInsertRowid;
-        const oi4 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000004', 10, 1880, 'Delivered')").run(o2Id);
-        const oi5 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000005', 20, 480, 'Delivered')").run(o2Id);
-        const oi6 = db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000006', 20, 130, 'Delivered')").run(o2Id);
+            const delId = db.prepare(`
+              INSERT INTO deliveries (order_id, shop_id, salesman_id, delivery_date, status, total_amount, distributor_id)
+              VALUES (?, ?, ?, ?, 'delivered', ?, 3)
+            `).run(orderId, shop.id, nSalesmen[0]?.id || 1, orderDate, total).lastInsertRowid;
 
-        // Order 3: Kharadar Cash & Carry (invoiced)
-        const o3 = db.prepare(`
-          INSERT INTO orders (shop_id, order_booker_id, order_date, status, total_amount, distributor_id)
-          VALUES (?, ?, '2026-08-15 14:00:00', 'invoiced', 42050, 2)
-        `).run(shopMap['Kharadar Cash & Carry'] || 3, waqasId);
-        const o3Id = o3.lastInsertRowid;
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000001', 30, 560, 'Pending')").run(o3Id);
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000007', 30, 355, 'Pending')").run(o3Id);
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000002', 20, 730, 'Pending')").run(o3Id);
+            db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oi1, p1.product_id, qty1, p1.trade_price);
+            db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)").run(delId, oi2, p2.product_id, qty2, p2.trade_price);
 
-        // Order 4: Burns Road Store (approved)
-        const o4 = db.prepare(`
-          INSERT INTO orders (shop_id, order_booker_id, order_date, status, total_amount, distributor_id)
-          VALUES (?, ?, '2026-08-16 09:00:00', 'approved', 14450, 2)
-        `).run(shopMap['Burns Road Store'] || 4, waqasId);
-        const o4Id = o4.lastInsertRowid;
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000005', 15, 480, 'Pending')").run(o4Id);
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000003', 15, 310, 'Pending')").run(o4Id);
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000006', 20, 130, 'Pending')").run(o4Id);
+            const invId = db.prepare(`
+              INSERT INTO invoices (invoice_number, delivery_id, shop_id, total_amount, status, created_at, distributor_id)
+              VALUES (?, ?, ?, ?, 'PAID', ?, 3)
+            `).run(`INV-NR-${orderId}`, delId, shop.id, total, orderDate).lastInsertRowid;
 
-        // Order 5: Defence Mini Mart (pending)
-        const o5 = db.prepare(`
-          INSERT INTO orders (shop_id, order_booker_id, order_date, status, total_amount, distributor_id)
-          VALUES (?, ?, '2026-08-16 11:20:00', 'pending', 18475, 2)
-        `).run(shopMap['Defence Mini Mart'] || 5, rashidId);
-        const o5Id = o5.lastInsertRowid;
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000004', 5, 1880, 'Pending')").run(o5Id);
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000002', 10, 730, 'Pending')").run(o5Id);
-        db.prepare("INSERT INTO order_items (order_id, product_id, quantity, price, status) VALUES (?, 'S000000007', 5, 355, 'Pending')").run(o5Id);
-
-        // Load Plan for South Zone
-        const lp = db.prepare(`
-          INSERT INTO load_plans (plan_date, vehicle_id, driver_id, status, distributor_id)
-          VALUES ('2026-08-14 07:30:00', 'KHI-SZ-8842', ?, 'completed', 2)
-        `).run(ghulamId);
-        const lpId = lp.lastInsertRowid;
-        db.prepare("INSERT INTO load_plan_items (plan_id, order_id) VALUES (?, ?)").run(lpId, o1Id);
-        db.prepare("INSERT INTO load_plan_items (plan_id, order_id) VALUES (?, ?)").run(lpId, o2Id);
-
-        // Deliveries
-        const del1 = db.prepare(`
-          INSERT INTO deliveries (order_id, shop_id, salesman_id, delivery_date, status, total_amount, distributor_id)
-          VALUES (?, ?, ?, '2026-08-14 14:00:00', 'completed', 24630, 2)
-        `).run(o1Id, shopMap['South Super Market'] || 1, hamzaId);
-        const del1Id = del1.lastInsertRowid;
-        db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, 'S000000001', 20, 560)").run(del1Id, oi1.lastInsertRowid);
-        db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, 'S000000002', 15, 730)").run(del1Id, oi2.lastInsertRowid);
-        db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, 'S000000003', 8, 310)").run(del1Id, oi3.lastInsertRowid);
-
-        const del2 = db.prepare(`
-          INSERT INTO deliveries (order_id, shop_id, salesman_id, delivery_date, status, total_amount, distributor_id)
-          VALUES (?, ?, ?, '2026-08-15 15:30:00', 'completed', 31000, 2)
-        `).run(o2Id, shopMap['Clifton Mart & Grocery'] || 2, danishId);
-        const del2Id = del2.lastInsertRowid;
-        db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, 'S000000004', 10, 1880)").run(del2Id, oi4.lastInsertRowid);
-        db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, 'S000000005', 20, 480)").run(del2Id, oi5.lastInsertRowid);
-        db.prepare("INSERT INTO delivery_items (delivery_id, order_item_id, product_id, quantity, price) VALUES (?, ?, 'S000000006', 20, 130)").run(del2Id, oi6.lastInsertRowid);
-
-        // Invoices
-        const inv1 = db.prepare(`
-          INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, status, distributor_id)
-          VALUES (?, '2026-08-14 14:15:00', 24630, 0, 0, 24630, 'paid', 2)
-        `).run(shopMap['South Super Market'] || 1);
-        const inv1Id = inv1.lastInsertRowid;
-        const ii1 = db.prepare("INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount) VALUES (?, ?, 1, 'S000000001', 20, 560, 11200)").run(inv1Id, del1Id);
-        db.prepare("INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount) VALUES (?, ?, 2, 'S000000002', 15, 730, 10950)").run(inv1Id, del1Id);
-        db.prepare("INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount) VALUES (?, ?, 3, 'S000000003', 8, 310, 2480)").run(inv1Id, del1Id);
-
-        const inv2 = db.prepare(`
-          INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, status, distributor_id)
-          VALUES (?, '2026-08-15 15:45:00', 31000, 0, 0, 31000, 'open', 2)
-        `).run(shopMap['Clifton Mart & Grocery'] || 2);
-        const inv2Id = inv2.lastInsertRowid;
-        db.prepare("INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount) VALUES (?, ?, 4, 'S000000004', 10, 1880, 18800)").run(inv2Id, del2Id);
-        db.prepare("INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount) VALUES (?, ?, 5, 'S000000005', 20, 480, 9600)").run(inv2Id, del2Id);
-        db.prepare("INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount) VALUES (?, ?, 6, 'S000000006', 20, 130, 2600)").run(inv2Id, del2Id);
-
-        // Sales Return for South Zone
-        const sr = db.prepare(`
-          INSERT INTO sales_returns (return_date, shop_id, invoice_id, total_amount, status, distributor_id)
-          VALUES ('2026-08-15 17:00:00', ?, ?, 620, 'completed', 2)
-        `).run(shopMap['South Super Market'] || 1, inv1Id);
-        db.prepare(`
-          INSERT INTO sales_return_items (sales_return_id, invoice_item_id, product_id, quantity, unit_price, reason)
-          VALUES (?, ?, 'S000000003', 2, 310, 'Damaged carton packaging during transit')
-        `).run(sr.lastInsertRowid, ii1.lastInsertRowid);
+            db.prepare("UPDATE deliveries SET invoice_id = ? WHERE id = ?").run(invId, delId);
+            db.prepare("INSERT INTO invoice_items (invoice_id, product_id, quantity, price, total) VALUES (?, ?, ?, ?, ?)").run(invId, p1.product_id, qty1, p1.trade_price, qty1 * p1.trade_price);
+            db.prepare("INSERT INTO invoice_items (invoice_id, product_id, quantity, price, total) VALUES (?, ?, ?, ?, ?)").run(invId, p2.product_id, qty2, p2.trade_price, qty2 * p2.trade_price);
+          }
+        }
       }
     })();
-    console.log("[Database] South Zone seed data verified and ready!");
+    console.log("[Database] North Zone master data verified and ready!");
   } catch (err) {
-    console.error("[Database Error] Seeding South Zone data failed:", err);
+    console.error("[Database Error] Seeding North Zone master data failed:", err);
   }
 }
 
@@ -1893,6 +2016,12 @@ try {
   seedSouthZoneData();
 } catch (e) {
   console.error("South Zone Seeding execution failed:", e);
+}
+
+try {
+  seedNorthZoneData();
+} catch (e) {
+  console.error("North Zone Seeding execution failed:", e);
 }
 
 async function startServer() {
@@ -2539,19 +2668,20 @@ async function startServer() {
     try {
       const distId = req.query.distributor_id && req.query.distributor_id !== 'all' ? Number(req.query.distributor_id) : null;
 
-      const orderWhere = distId ? `WHERE status = 'delivered' AND is_cancelled != 'X' AND (distributor_id = ${distId} OR distributor_id IS NULL)` : `WHERE status = 'delivered' AND is_cancelled != 'X'`;
-      const pendingWhere = distId ? `WHERE status IN ('pending', 'partially_delivered') AND is_cancelled != 'X' AND (distributor_id = ${distId} OR distributor_id IS NULL)` : `WHERE status IN ('pending', 'partially_delivered') AND is_cancelled != 'X'`;
-      const shopWhere = distId ? `WHERE distributor_id = ${distId} OR distributor_id IS NULL` : ``;
+      const orderWhere = distId ? `WHERE status = 'delivered' AND is_cancelled != 'X' AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : `WHERE status = 'delivered' AND is_cancelled != 'X'`;
+      const pendingWhere = distId ? `WHERE status IN ('pending', 'partially_delivered') AND is_cancelled != 'X' AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : `WHERE status IN ('pending', 'partially_delivered') AND is_cancelled != 'X'`;
+      const shopWhere = distId ? `WHERE (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : ``;
+      const lowStockWhere = distId ? `WHERE stock_quantity <= min_stock_level AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : `WHERE stock_quantity <= min_stock_level`;
 
       const totalSales = db.prepare(`SELECT SUM(total_amount) as total FROM orders ${orderWhere}`).get() as { total: number };
       const pendingOrders = db.prepare(`SELECT COUNT(*) as count FROM orders ${pendingWhere}`).get() as { count: number };
-      const lowStock = db.prepare("SELECT COUNT(*) as count FROM products WHERE stock_quantity <= min_stock_level").get() as { count: number };
+      const lowStock = db.prepare(`SELECT COUNT(*) as count FROM products ${lowStockWhere}`).get() as { count: number };
       const totalShops = db.prepare(`SELECT COUNT(*) as count FROM shops ${shopWhere}`).get() as { count: number };
       
       const statusCounts = db.prepare(`
         SELECT status as name, COUNT(*) as value 
         FROM orders 
-        WHERE is_cancelled != 'X' ${distId ? `AND (distributor_id = ${distId} OR distributor_id IS NULL)` : ''}
+        WHERE is_cancelled != 'X' ${distId ? `AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : ''}
         GROUP BY status
       `).all() as { name: string; value: number }[];
 
@@ -2565,7 +2695,7 @@ async function startServer() {
         SELECT s.location as name, SUM(o.total_amount) as value 
         FROM orders o
         JOIN shops s ON o.shop_id = s.id
-        WHERE o.status = 'delivered' ${distId ? `AND (o.distributor_id = ${distId} OR o.distributor_id IS NULL)` : ''}
+        WHERE o.status = 'delivered' ${distId ? `AND (o.distributor_id = ${distId} OR (o.distributor_id IS NULL AND ${distId} = 1))` : ''}
         GROUP BY s.location
         ORDER BY value DESC
         LIMIT 5
@@ -2576,7 +2706,7 @@ async function startServer() {
         SELECT ob.name as name, SUM(o.total_amount) as value 
         FROM orders o
         JOIN order_bookers ob ON o.order_booker_id = ob.id
-        WHERE o.status = 'delivered' ${distId ? `AND (o.distributor_id = ${distId} OR o.distributor_id IS NULL)` : ''}
+        WHERE o.status = 'delivered' ${distId ? `AND (o.distributor_id = ${distId} OR (o.distributor_id IS NULL AND ${distId} = 1))` : ''}
         GROUP BY ob.name
         ORDER BY value DESC
         LIMIT 5
@@ -2586,7 +2716,7 @@ async function startServer() {
       const salesTrend = db.prepare(`
         SELECT strftime('%Y-%m-%d', order_date) as name, SUM(total_amount) as value 
         FROM orders 
-        WHERE order_date >= date('now', '-7 days') AND status = 'delivered' ${distId ? `AND (distributor_id = ${distId} OR distributor_id IS NULL)` : ''}
+        WHERE order_date >= date('now', '-7 days') AND status = 'delivered' ${distId ? `AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : ''}
         GROUP BY name
         ORDER BY name ASC
       `).all() as { name: string; value: number }[];
@@ -2598,7 +2728,7 @@ async function startServer() {
         JOIN products p ON oi.product_id = p.product_id
         JOIN material_groups mg ON p.material_group_id = mg.mat_gp
         JOIN orders o ON oi.order_id = o.id
-        WHERE o.status = 'delivered' ${distId ? `AND (o.distributor_id = ${distId} OR o.distributor_id IS NULL)` : ''}
+        WHERE o.status = 'delivered' ${distId ? `AND (o.distributor_id = ${distId} OR (o.distributor_id IS NULL AND ${distId} = 1))` : ''}
         GROUP BY mg.mat_description
         ORDER BY value DESC
         LIMIT 5
@@ -2625,18 +2755,20 @@ async function startServer() {
     try {
       const distId = req.query.distributor_id && req.query.distributor_id !== 'all' ? Number(req.query.distributor_id) : null;
 
-      const orderWhere = distId ? `WHERE (o.distributor_id = ${distId} OR o.distributor_id IS NULL)` : '';
-      const statsOrderWhere = distId ? `WHERE status = 'delivered' AND (distributor_id = ${distId} OR distributor_id IS NULL)` : `WHERE status = 'delivered'`;
-      const pendingWhere = distId ? `WHERE status = 'pending' AND (distributor_id = ${distId} OR distributor_id IS NULL)` : `WHERE status = 'pending'`;
-      const shopWhere = distId ? `WHERE (distributor_id = ${distId} OR distributor_id IS NULL)` : '';
-      const purchaseWhere = distId ? `WHERE (p.distributor_id = ${distId} OR p.distributor_id IS NULL)` : '';
-      const loadPlanWhere = distId ? `WHERE (lp.distributor_id = ${distId} OR lp.distributor_id IS NULL)` : '';
-      const deliveryWhere = distId ? `WHERE (d.distributor_id = ${distId} OR d.distributor_id IS NULL)` : '';
-      const returnWhere = distId ? `WHERE (r.distributor_id = ${distId} OR r.distributor_id IS NULL)` : '';
-      const invoiceWhere = distId ? `WHERE (i.distributor_id = ${distId} OR i.distributor_id IS NULL)` : '';
-      const bookerWhere = distId ? `WHERE (distributor_id = ${distId} OR distributor_id IS NULL)` : '';
-      const salesmanWhere = distId ? `WHERE (distributor_id = ${distId} OR distributor_id IS NULL)` : '';
-      const driverWhere = distId ? `WHERE (distributor_id = ${distId} OR distributor_id IS NULL)` : '';
+      const orderWhere = distId ? `WHERE (o.distributor_id = ${distId} OR (o.distributor_id IS NULL AND ${distId} = 1))` : '';
+      const statsOrderWhere = distId ? `WHERE status = 'delivered' AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : `WHERE status = 'delivered'`;
+      const pendingWhere = distId ? `WHERE status = 'pending' AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : `WHERE status = 'pending'`;
+      const shopWhere = distId ? `WHERE (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : '';
+      const lowStockWhere = distId ? `WHERE stock_quantity <= min_stock_level AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : `WHERE stock_quantity <= min_stock_level`;
+      const purchaseWhere = distId ? `WHERE (p.distributor_id = ${distId} OR (p.distributor_id IS NULL AND ${distId} = 1))` : '';
+      const loadPlanWhere = distId ? `WHERE (lp.distributor_id = ${distId} OR (lp.distributor_id IS NULL AND ${distId} = 1))` : '';
+      const deliveryWhere = distId ? `WHERE (d.distributor_id = ${distId} OR (d.distributor_id IS NULL AND ${distId} = 1))` : '';
+      const returnWhere = distId ? `WHERE (r.distributor_id = ${distId} OR (r.distributor_id IS NULL AND ${distId} = 1))` : '';
+      const invoiceWhere = distId ? `WHERE (i.distributor_id = ${distId} OR (i.distributor_id IS NULL AND ${distId} = 1))` : '';
+      const bookerWhere = distId ? `WHERE (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : '';
+      const salesmanWhere = distId ? `WHERE (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : '';
+      const driverWhere = distId ? `WHERE (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : '';
+      const productWhere = distId ? `WHERE (p.distributor_id = ${distId} OR (p.distributor_id IS NULL AND ${distId} = 1))` : '';
 
       let stats: any = {};
       let pendingOrders: any = {};
@@ -2663,10 +2795,10 @@ async function startServer() {
 
       try { stats = db.prepare(`SELECT SUM(total_amount) as total FROM orders ${statsOrderWhere}`).get() || {}; } catch(e) {}
       try { pendingOrders = db.prepare(`SELECT COUNT(*) as count FROM orders ${pendingWhere}`).get() || {}; } catch(e) {}
-      try { lowStock = db.prepare("SELECT COUNT(*) as count FROM products WHERE stock_quantity <= min_stock_level").get() || {}; } catch(e) {}
+      try { lowStock = db.prepare(`SELECT COUNT(*) as count FROM products ${lowStockWhere}`).get() || {}; } catch(e) {}
       try { totalShops = db.prepare(`SELECT COUNT(*) as count FROM shops ${shopWhere}`).get() || {}; } catch(e) {}
-      try { statusCounts = db.prepare(`SELECT status as name, COUNT(*) as value FROM orders ${distId ? `WHERE (distributor_id = ${distId} OR distributor_id IS NULL)` : ''} GROUP BY status`).all() || []; } catch(e) {}
-      try { salesTrend = db.prepare(`SELECT strftime('%Y-%m-%d', order_date) as name, SUM(total_amount) as value FROM orders WHERE order_date >= date('now', '-7 days') AND status = 'delivered' ${distId ? `AND (distributor_id = ${distId} OR distributor_id IS NULL)` : ''} GROUP BY name ORDER BY name ASC`).all() || []; } catch(e) {}
+      try { statusCounts = db.prepare(`SELECT status as name, COUNT(*) as value FROM orders ${distId ? `WHERE (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : ''} GROUP BY status`).all() || []; } catch(e) {}
+      try { salesTrend = db.prepare(`SELECT strftime('%Y-%m-%d', order_date) as name, SUM(total_amount) as value FROM orders WHERE order_date >= date('now', '-7 days') AND status = 'delivered' ${distId ? `AND (distributor_id = ${distId} OR (distributor_id IS NULL AND ${distId} = 1))` : ''} GROUP BY name ORDER BY name ASC`).all() || []; } catch(e) {}
 
       try {
         distributors = db.prepare(`
@@ -2679,7 +2811,6 @@ async function startServer() {
         `).all() || [];
       } catch(e) {}
 
-      const productWhere = distId ? `WHERE (p.distributor_id = ${distId} OR p.distributor_id IS NULL)` : '';
       try { products = db.prepare(`SELECT p.*, mg.mat_description as material_group_name FROM products p LEFT JOIN material_groups mg ON p.material_group_id = mg.mat_gp ${productWhere}`).all() || []; } catch(e) {}
       try { shops = db.prepare(`SELECT * FROM shops ${shopWhere}`).all() || []; } catch(e) {}
       try { suppliers = db.prepare("SELECT * FROM suppliers").all() || []; } catch(e) {}
@@ -2762,11 +2893,11 @@ async function startServer() {
       try {
         valuation = db.prepare(`
           SELECT 
-            SUM(remaining_quantity * pb.purchase_price) as totalValueAtPP,
-            SUM(remaining_quantity * p.trade_price) as totalPotentialRevenueAtTP
+            SUM(pb.remaining_quantity * pb.purchase_price) as totalValueAtPP,
+            SUM(pb.remaining_quantity * p.trade_price) as totalPotentialRevenueAtTP
           FROM product_batches pb
           JOIN products p ON pb.product_id = p.product_id
-          WHERE remaining_quantity > 0
+          WHERE pb.remaining_quantity > 0 ${distId ? `AND (p.distributor_id = ${distId} OR (p.distributor_id IS NULL AND ${distId} = 1))` : ''}
         `).get() || {};
       } catch(e) {}
 
@@ -3038,20 +3169,37 @@ async function startServer() {
   });
 
   app.post("/api/shops", (req, res) => {
-    const { shop_name, owner_name, location, phone, credit_limit, distributor_id } = req.body;
+    const { shop_name, owner_name, area, subarea, location, address, phone, credit_limit, category, distributor_id } = req.body;
     const distId = distributor_id ? Number(distributor_id) : 1;
-    const result = db.prepare("INSERT INTO shops (shop_name, owner_name, location, phone, credit_limit, distributor_id) VALUES (?, ?, ?, ?, ?, ?)").run(
-      shop_name, owner_name, location, phone, credit_limit, distId
-    );
-    res.json({ id: result.lastInsertRowid });
+    const finalSubarea = (subarea || location || '').trim();
+    const finalLocation = finalSubarea || (area || '').trim();
+    const finalCategory = category || 'Retailer';
+    try {
+      const result = db.prepare(`
+        INSERT INTO shops (shop_name, owner_name, area, subarea, location, address, phone, credit_limit, category, distributor_id) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        shop_name, owner_name, (area || '').trim(), finalSubarea, finalLocation, (address || '').trim(), phone, Number(credit_limit) || 0, finalCategory, distId
+      );
+      res.json({ id: result.lastInsertRowid });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   app.put("/api/shops/:id", (req, res) => {
     const { id } = req.params;
-    const { shop_name, owner_name, location, phone, credit_limit } = req.body;
+    const { shop_name, owner_name, area, subarea, location, address, phone, credit_limit, category } = req.body;
+    const finalSubarea = (subarea || location || '').trim();
+    const finalLocation = finalSubarea || (area || '').trim();
+    const finalCategory = category || 'Retailer';
     try {
-      db.prepare("UPDATE shops SET shop_name = ?, owner_name = ?, location = ?, phone = ?, credit_limit = ? WHERE id = ?").run(
-        shop_name, owner_name, location, phone, credit_limit, id
+      db.prepare(`
+        UPDATE shops 
+        SET shop_name = ?, owner_name = ?, area = ?, subarea = ?, location = ?, address = ?, phone = ?, credit_limit = ?, category = ? 
+        WHERE id = ?
+      `).run(
+        shop_name, owner_name, (area || '').trim(), finalSubarea, finalLocation, (address || '').trim(), phone, Number(credit_limit) || 0, finalCategory, id
       );
       res.json({ success: true });
     } catch (err: any) {
@@ -4768,8 +4916,21 @@ async function startServer() {
         const tax = (Number(item.tax_pct) || 0) + (Number(item.additional_tax_pct) || 0);
         const itemNet = itemGross - (itemGross * disc / 100) + (itemGross * tax / 100);
 
+        let delItemId = item.delivery_item_id || null;
+        if (!delItemId && item.delivery_id && item.product_id) {
+          const diRow = db.prepare("SELECT id FROM delivery_items WHERE delivery_id = ? AND product_id = ? LIMIT 1").get(item.delivery_id, item.product_id) as any;
+          if (diRow) delItemId = diRow.id;
+        }
+        if (!delItemId && item.delivery_id) {
+          const diRow = db.prepare("SELECT id FROM delivery_items WHERE delivery_id = ? LIMIT 1").get(item.delivery_id) as any;
+          if (diRow) delItemId = diRow.id;
+        }
+        if (!delItemId) {
+          delItemId = item.id || 1;
+        }
+
         insertItem.run(
-          invoiceId, item.delivery_id, item.delivery_item_id, item.product_id,
+          invoiceId, item.delivery_id, delItemId, item.product_id,
           Number(item.quantity), Number(item.unit_price), Number(item.trade_discount_pct) || 0,
           Number(item.tax_pct) || 0, Number(item.additional_tax_pct) || 0, Number(item.special_discount_pct) || 0, Math.round(itemNet * 100) / 100
         );
@@ -4878,8 +5039,21 @@ async function startServer() {
         const tax = (Number(item.tax_pct) || 0) + (Number(item.additional_tax_pct) || 0);
         const itemNet = itemGross - (itemGross * disc / 100) + (itemGross * tax / 100);
 
+        let delItemId = item.delivery_item_id || null;
+        if (!delItemId && item.delivery_id && item.product_id) {
+          const diRow = db.prepare("SELECT id FROM delivery_items WHERE delivery_id = ? AND product_id = ? LIMIT 1").get(item.delivery_id, item.product_id) as any;
+          if (diRow) delItemId = diRow.id;
+        }
+        if (!delItemId && item.delivery_id) {
+          const diRow = db.prepare("SELECT id FROM delivery_items WHERE delivery_id = ? LIMIT 1").get(item.delivery_id) as any;
+          if (diRow) delItemId = diRow.id;
+        }
+        if (!delItemId) {
+          delItemId = item.id || 1;
+        }
+
         insertItem.run(
-          id, item.delivery_id, item.delivery_item_id, item.product_id,
+          id, item.delivery_id, delItemId, item.product_id,
           Number(item.quantity), Number(item.unit_price), Number(item.trade_discount_pct) || 0,
           Number(item.tax_pct) || 0, Number(item.additional_tax_pct) || 0, Number(item.special_discount_pct) || 0, Math.round(itemNet * 100) / 100
         );
@@ -5260,17 +5434,23 @@ async function startServer() {
   });
 
   app.get("/api/reports/stock-valuation", (req, res) => {
+    const distId = req.query.distributor_id && req.query.distributor_id !== 'all' 
+      ? Number(req.query.distributor_id) 
+      : (req.query.distributorId && req.query.distributorId !== 'all' ? Number(req.query.distributorId) : null);
+    
+    const distWhere = distId ? `AND (p.distributor_id = ${distId} OR (p.distributor_id IS NULL AND 1 = ${distId}))` : '';
+
     const valuation = db.prepare(`
       SELECT 
         SUM(remaining_quantity * pb.purchase_price) as totalValueAtPP,
         SUM(remaining_quantity * p.trade_price) as totalPotentialRevenueAtTP
       FROM product_batches pb
       JOIN products p ON pb.product_id = p.product_id
-      WHERE remaining_quantity > 0
+      WHERE remaining_quantity > 0 ${distWhere}
     `).get() as any;
 
-    const totalValueAtPP = valuation.totalValueAtPP || 0;
-    const totalPotentialRevenueAtTP = valuation.totalPotentialRevenueAtTP || 0;
+    const totalValueAtPP = valuation?.totalValueAtPP || 0;
+    const totalPotentialRevenueAtTP = valuation?.totalPotentialRevenueAtTP || 0;
     const totalPotentialProfit = totalPotentialRevenueAtTP - totalValueAtPP;
     const averageMarginPercent = totalPotentialRevenueAtTP > 0 
       ? (totalPotentialProfit / totalPotentialRevenueAtTP) * 100 
@@ -5286,7 +5466,9 @@ async function startServer() {
 
   app.get("/api/reports/daily-load-plan", (req, res) => {
     try {
-      const { startDate, endDate } = req.query;
+      const { startDate, endDate, distributor_id, distributorId } = req.query;
+      const targetDistId = distributor_id || distributorId;
+
       let queryStr = `
         SELECT 
           i.id as invoice_id,
@@ -5310,6 +5492,12 @@ async function startServer() {
       `;
       const params: any[] = [];
       const conditions: string[] = [];
+
+      if (targetDistId && targetDistId !== 'all') {
+        const dId = Number(targetDistId);
+        conditions.push("(i.distributor_id = ? OR (i.distributor_id IS NULL AND s.distributor_id = ?))");
+        params.push(dId, dId);
+      }
 
       if (startDate) {
         conditions.push("strftime('%Y-%m-%d', i.invoice_date) >= ?");
@@ -5517,15 +5705,21 @@ async function startServer() {
 
   app.get("/api/reports/stock-detail", (req, res) => {
     try {
-      const { productId, startDate, endDate } = req.query;
+      const { productId, startDate, endDate, distributor_id, distributorId } = req.query;
+      const targetDistId = distributor_id || distributorId;
+      const distId = targetDistId && targetDistId !== 'all' ? Number(targetDistId) : null;
+
       if (!productId) {
         return res.status(400).json({ error: "productId is required" });
       }
 
-      // Get product info
-      const product = db.prepare("SELECT * FROM products WHERE product_id = ?").get(productId) as any;
+      // Get product info (check distributor ownership if scoped)
+      const productWhere = distId 
+        ? `WHERE product_id = ? AND (distributor_id = ${distId} OR (distributor_id IS NULL AND 1 = ${distId}))` 
+        : `WHERE product_id = ?`;
+      const product = db.prepare(`SELECT * FROM products ${productWhere}`).get(productId) as any;
       if (!product) {
-        return res.status(404).json({ error: "Product not found" });
+        return res.status(404).json({ error: "Product not found or not accessible under current distributor scope" });
       }
 
       // 1. Get constant system opening stock baseline
@@ -5537,6 +5731,11 @@ async function startServer() {
       const systemOpening = systemOpeningResult ? systemOpeningResult.total : 0;
 
       // 2. Query all transaction stock movements (excluding initial/opening stock as transactions)
+      const purchaseDistWhere = distId ? `AND (p.distributor_id = ${distId} OR (p.distributor_id IS NULL AND 1 = ${distId}))` : '';
+      const invoiceDistWhere = distId ? `AND (i.distributor_id = ${distId} OR (i.distributor_id IS NULL AND 1 = ${distId}))` : '';
+      const srDistWhere = distId ? `AND (sr.distributor_id = ${distId} OR (sr.distributor_id IS NULL AND 1 = ${distId}))` : '';
+      const prDistWhere = distId ? `AND (pr.distributor_id = ${distId} OR (pr.distributor_id IS NULL AND 1 = ${distId}))` : '';
+
       const purchases = db.prepare(`
         SELECT 
           p.purchase_date AS doc_date,
@@ -5550,7 +5749,7 @@ async function startServer() {
         FROM purchase_items pi
         JOIN purchases p ON pi.purchase_id = p.id
         JOIN suppliers s ON p.supplier_id = s.id
-        WHERE pi.product_id = ? AND p.status != 'cancelled'
+        WHERE pi.product_id = ? AND p.status != 'cancelled' ${purchaseDistWhere}
       `).all(productId) as any[];
 
       const sales = db.prepare(`
@@ -5566,7 +5765,7 @@ async function startServer() {
         FROM invoice_items ii
         JOIN invoices i ON ii.invoice_id = i.id
         JOIN shops sh ON i.shop_id = sh.id
-        WHERE ii.product_id = ? AND i.status != 'cancelled'
+        WHERE ii.product_id = ? AND i.status != 'cancelled' ${invoiceDistWhere}
       `).all(productId) as any[];
 
       const salesReturns = db.prepare(`
@@ -5582,7 +5781,7 @@ async function startServer() {
         FROM sales_return_items sri
         JOIN sales_returns sr ON sri.sales_return_id = sr.id
         JOIN shops sh ON sr.shop_id = sh.id
-        WHERE sri.product_id = ? AND sr.status != 'cancelled'
+        WHERE sri.product_id = ? AND sr.status != 'cancelled' ${srDistWhere}
       `).all(productId) as any[];
 
       const purchaseReturns = db.prepare(`
@@ -5598,7 +5797,7 @@ async function startServer() {
         FROM purchase_return_items pri
         JOIN purchase_returns pr ON pri.purchase_return_id = pr.id
         JOIN suppliers s ON pr.supplier_id = s.id
-        WHERE pri.product_id = ? AND pr.status != 'cancelled'
+        WHERE pri.product_id = ? AND pr.status != 'cancelled' ${prDistWhere}
       `).all(productId) as any[];
 
       // Combine non-baseline movements
@@ -5718,7 +5917,8 @@ async function startServer() {
 
   app.get("/api/reports/area-wise-item-party-summary", (req, res) => {
     try {
-      const { startDate, endDate } = req.query;
+      const { startDate, endDate, distributor_id, distributorId } = req.query;
+      const targetDistId = distributor_id || distributorId;
       
       let queryStr = `
         SELECT 
@@ -5742,6 +5942,12 @@ async function startServer() {
 
       const params: any[] = [];
       const conditions: string[] = [];
+
+      if (targetDistId && targetDistId !== 'all') {
+        const dId = Number(targetDistId);
+        conditions.push("(i.distributor_id = ? OR (i.distributor_id IS NULL AND s.distributor_id = ?))");
+        params.push(dId, dId);
+      }
 
       if (startDate) {
         conditions.push("strftime('%Y-%m-%d', i.invoice_date) >= ?");
@@ -5908,22 +6114,72 @@ async function startServer() {
     subareas: 'area_id'
   };
 
+  app.get('/api/locations/areas', (req, res) => {
+    const { parentId, townId, town_id } = req.query;
+    const targetTownId = parentId || townId || town_id;
+    let query = `
+      SELECT a.*, t.name as town_name 
+      FROM areas a 
+      LEFT JOIN towns t ON a.town_id = t.id
+    `;
+    const params: any[] = [];
+    if (targetTownId) {
+      query += ` WHERE a.town_id = ?`;
+      params.push(targetTownId);
+    }
+    query += ` ORDER BY a.name ASC`;
+    const data = db.prepare(query).all(...params);
+    res.json(data);
+  });
+
+  app.get('/api/locations/subareas', (req, res) => {
+    const { parentId, areaId, area_id, areaName, area_name } = req.query;
+    const targetAreaId = parentId || areaId || area_id;
+    const targetAreaName = areaName || area_name;
+    
+    let query = `
+      SELECT sa.*, a.name as area_name 
+      FROM subareas sa 
+      LEFT JOIN areas a ON sa.area_id = a.id
+    `;
+    const params: any[] = [];
+    const conditions: string[] = [];
+    
+    if (targetAreaId) {
+      conditions.push("sa.area_id = ?");
+      params.push(targetAreaId);
+    }
+    if (targetAreaName) {
+      conditions.push("LOWER(TRIM(a.name)) = LOWER(TRIM(?))");
+      params.push(String(targetAreaName));
+    }
+    
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(" AND ")}`;
+    }
+    query += ` ORDER BY sa.name ASC`;
+    const data = db.prepare(query).all(...params);
+    res.json(data);
+  });
+
   locationTypes.forEach(type => {
-    app.get(`/api/locations/${type}`, (req, res) => {
-      const parentId = req.query.parentId;
-      const parentField = parentMap[type];
-      
-      let query = `SELECT * FROM ${type}`;
-      let params: any[] = [];
-      
-      if (parentId && parentField) {
-        query += ` WHERE ${parentField} = ?`;
-        params.push(parentId);
-      }
-      
-      const data = db.prepare(query).all(...params);
-      res.json(data);
-    });
+    if (type !== 'areas' && type !== 'subareas') {
+      app.get(`/api/locations/${type}`, (req, res) => {
+        const parentId = req.query.parentId;
+        const parentField = parentMap[type];
+        
+        let query = `SELECT * FROM ${type}`;
+        let params: any[] = [];
+        
+        if (parentId && parentField) {
+          query += ` WHERE ${parentField} = ?`;
+          params.push(parentId);
+        }
+        
+        const data = db.prepare(query).all(...params);
+        res.json(data);
+      });
+    }
 
     app.post(`/api/locations/${type}`, (req, res) => {
       const { name, parentId } = req.body;

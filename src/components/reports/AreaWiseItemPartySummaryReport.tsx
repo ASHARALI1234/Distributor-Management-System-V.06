@@ -17,9 +17,18 @@ interface ReportRow {
 interface AreaWiseReportProps {
   onBack: () => void;
   formatPKR: (num: number) => string;
+  distributorId?: string | number | null;
+  isSuperAdmin?: boolean;
+  currentUser?: any;
 }
 
-export const AreaWiseItemPartySummaryReport: React.FC<AreaWiseReportProps> = ({ onBack, formatPKR }) => {
+export const AreaWiseItemPartySummaryReport: React.FC<AreaWiseReportProps> = ({ 
+  onBack, 
+  formatPKR,
+  distributorId,
+  isSuperAdmin,
+  currentUser
+}) => {
   const [data, setData] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +40,8 @@ export const AreaWiseItemPartySummaryReport: React.FC<AreaWiseReportProps> = ({ 
   const initialSearchQuery = urlParams.get('searchQuery') || '';
   const initialBooker = urlParams.get('selectedBooker') || 'ALL';
   const initialProduct = urlParams.get('selectedProduct') || 'ALL';
+  const paramDistId = urlParams.get('distributor_id') || urlParams.get('distributorId');
+  const activeDistId = distributorId || paramDistId || (currentUser?.distributor_id ? String(currentUser.distributor_id) : 'all');
 
   // Filters state
   const [startDate, setStartDate] = useState<string>(initialStartDate);
@@ -47,7 +58,7 @@ export const AreaWiseItemPartySummaryReport: React.FC<AreaWiseReportProps> = ({ 
 
   useEffect(() => {
     fetchReportData();
-  }, [startDate, endDate]);
+  }, [startDate, endDate, activeDistId]);
 
   // Auto-print effect when launched with ?print=true (bypasses iframe block in standalone tab)
   useEffect(() => {
@@ -70,6 +81,9 @@ export const AreaWiseItemPartySummaryReport: React.FC<AreaWiseReportProps> = ({ 
         startDate,
         endDate
       });
+      if (activeDistId && activeDistId !== 'all') {
+        queryParams.set('distributor_id', String(activeDistId));
+      }
       const res = await fetch(`/api/reports/area-wise-item-party-summary?${queryParams.toString()}`);
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`);
@@ -94,6 +108,9 @@ export const AreaWiseItemPartySummaryReport: React.FC<AreaWiseReportProps> = ({ 
     params.set('selectedBooker', selectedBooker);
     params.set('selectedProduct', selectedProduct);
     params.set('searchQuery', searchQuery);
+    if (activeDistId && activeDistId !== 'all') {
+      params.set('distributor_id', String(activeDistId));
+    }
     return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
   };
 

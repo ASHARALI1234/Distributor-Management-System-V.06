@@ -50,6 +50,9 @@ interface InvoiceRecord {
 interface SalesTaxInvoiceReportProps {
   onBack: () => void;
   formatPKR: (num: number) => string;
+  distributorId?: string | number | null;
+  isSuperAdmin?: boolean;
+  currentUser?: any;
 }
 
 // Standard English Words Converter
@@ -124,7 +127,13 @@ const getShopNTN = (shopId: number, phone: string): string => {
   return `${part1}-${part2}-${part3}/`;
 };
 
-export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ onBack, formatPKR }) => {
+export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ 
+  onBack, 
+  formatPKR,
+  distributorId,
+  isSuperAdmin,
+  currentUser
+}) => {
   const [data, setData] = useState<InvoiceRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -136,9 +145,14 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
   const initialInvoiceNoFrom = urlParams.get('invoiceNoFrom') || '';
   const initialInvoiceNoTo = urlParams.get('invoiceNoTo') || '';
 
+  const userDistId = currentUser?.distributor_id ? String(currentUser.distributor_id) : null;
+  const canSwitchDistributor = isSuperAdmin || currentUser?.role === 'admin' || (!userDistId);
+  const defaultDistributor = canSwitchDistributor 
+    ? (distributorId || urlParams.get('distributorId') || 'all')
+    : (userDistId || '1');
+
   const [distributors, setDistributors] = useState<Distributor[]>([]);
-  const initialDistributor = urlParams.get('distributorId') || 'all';
-  const [selectedDistributor, setSelectedDistributor] = useState<string>(initialDistributor);
+  const [selectedDistributor, setSelectedDistributor] = useState<string>(defaultDistributor);
 
   // Filters state
   const [startDate, setStartDate] = useState<string>(initialStartDate);
@@ -167,6 +181,14 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
       console.error("Failed to load distributors", e);
     }
   };
+
+  useEffect(() => {
+    if (!canSwitchDistributor && userDistId) {
+      setSelectedDistributor(userDistId);
+    } else if (distributorId && distributorId !== selectedDistributor) {
+      setSelectedDistributor(String(distributorId));
+    }
+  }, [distributorId, userDistId, canSwitchDistributor]);
 
   useEffect(() => {
     fetchReportData();
@@ -343,13 +365,16 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
               <label className="text-[10px] font-bold text-slate-500 uppercase">Distributor</label>
               <select
                 value={selectedDistributor}
+                disabled={!canSwitchDistributor}
                 onChange={(e) => setSelectedDistributor(e.target.value)}
-                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all"
+                className={`w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all ${!canSwitchDistributor ? 'opacity-60 cursor-not-allowed' : ''}`}
               >
-                <option value="all">All Distributors</option>
-                {distributors.map(d => (
-                  <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
-                ))}
+                {canSwitchDistributor && <option value="all">All Distributors</option>}
+                {distributors
+                  .filter(d => canSwitchDistributor || String(d.id) === userDistId)
+                  .map(d => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                  ))}
               </select>
             </div>
 
@@ -408,7 +433,7 @@ export const SalesTaxInvoiceReport: React.FC<SalesTaxInvoiceReportProps> = ({ on
                 setEndDate('2021-06-16');
                 setInvoiceNoFrom('');
                 setInvoiceNoTo('');
-                setSelectedDistributor('all');
+                setSelectedDistributor(defaultDistributor);
               }}
               className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all"
             >

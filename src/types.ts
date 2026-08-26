@@ -121,10 +121,14 @@ export interface Shop {
   id: number;
   shop_name: string;
   owner_name: string;
+  area?: string;
+  subarea?: string;
   location: string;
+  address?: string;
   phone: string;
   credit_limit: number;
   category?: string;
+  distributor_id?: number;
 }
 
 export interface OrderBooker {

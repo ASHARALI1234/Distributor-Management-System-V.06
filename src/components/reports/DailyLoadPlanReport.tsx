@@ -39,13 +39,24 @@ interface SubAreaLoadPlan {
 interface DailyLoadPlanReportProps {
   onBack: () => void;
   formatPKR: (num: number) => string;
+  distributorId?: string | number | null;
+  isSuperAdmin?: boolean;
+  currentUser?: any;
 }
 
-export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({ onBack, formatPKR }) => {
+export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({ 
+  onBack, 
+  formatPKR,
+  distributorId,
+  isSuperAdmin,
+  currentUser
+}) => {
   // Read initial query params for printing state persistence
   const urlParams = new URLSearchParams(window.location.search);
   const initialStartDate = urlParams.get('startDate') || '2021-06-16';
   const initialEndDate = urlParams.get('endDate') || '2021-06-16';
+  const paramDistId = urlParams.get('distributor_id') || urlParams.get('distributorId');
+  const activeDistId = distributorId || paramDistId || (currentUser?.distributor_id ? String(currentUser.distributor_id) : 'all');
 
   const [loadPlans, setLoadPlans] = useState<SubAreaLoadPlan[]>([]);
   const [selectedAreaName, setSelectedAreaName] = useState<string>('');
@@ -65,7 +76,7 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({ onBack
 
   useEffect(() => {
     fetchLoadPlanData();
-  }, [startDate, endDate]);
+  }, [startDate, endDate, activeDistId]);
 
   // Auto-print effect when launched with ?print=true (bypasses iframe block in standalone tab)
   useEffect(() => {
@@ -87,6 +98,9 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({ onBack
       const queryParams = new URLSearchParams();
       queryParams.set('startDate', startDate);
       queryParams.set('endDate', endDate);
+      if (activeDistId && activeDistId !== 'all') {
+        queryParams.set('distributor_id', String(activeDistId));
+      }
       const res = await fetch(`/api/reports/daily-load-plan?${queryParams.toString()}`);
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`);
@@ -118,6 +132,9 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({ onBack
     params.set('subArea', selectedAreaName);
     params.set('startDate', startDate);
     params.set('endDate', endDate);
+    if (activeDistId && activeDistId !== 'all') {
+      params.set('distributor_id', String(activeDistId));
+    }
     return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
   };
 

@@ -82,6 +82,7 @@ export const InvoiceTransactionModal = ({
               return {
                 ...it,
                 delivery_id: dId,
+                delivery_item_id: it.id,
                 max_delivery_qty: maxDeliveryQty,
                 quantity: maxDeliveryQty, // default to maximum billable
                 original_delivery_qty: it.quantity,
@@ -207,7 +208,7 @@ export const InvoiceTransactionModal = ({
       delivery_ids: selectedDeliveryIds,
       items: invoiceItems.map(it => ({
         delivery_id: it.delivery_id,
-        delivery_item_id: it.id,
+        delivery_item_id: it.delivery_item_id || it.id,
         product_id: it.product_id,
         quantity: Number(it.quantity),
         unit_price: Number(it.unit_price),
@@ -750,6 +751,8 @@ export const EditInvoiceModal = ({
           : (it.delivery_quantity !== undefined ? it.delivery_quantity - (it.return_qty || 0) : it.quantity);
         return {
           ...it,
+          delivery_item_id: it.delivery_item_id || it.delivery_items_id || it.id,
+          delivery_id: it.delivery_id,
           max_delivery_qty: maxDeliveryQty,
           original_delivery_qty: it.delivery_quantity || it.quantity,
           return_qty: it.return_qty || 0,
@@ -842,6 +845,7 @@ export const EditInvoiceModal = ({
         id: it.id,
         product_id: it.product_id,
         delivery_id: it.delivery_id,
+        delivery_item_id: it.delivery_item_id || it.delivery_items_id || it.id,
         quantity: Number(it.quantity),
         unit_price: Number(it.unit_price),
         trade_discount_pct: Number(it.trade_discount_pct || 0),
