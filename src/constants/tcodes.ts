@@ -359,6 +359,33 @@ export const TCODES: TCodeInfo[] = [
     description: 'View and print posted invoice documents.'
   },
   {
+    module: 'Payment Management',
+    parentModule: 'Sales',
+    tCode: 'PA01',
+    transactionName: 'Create Payment',
+    actionType: 'Create',
+    roleAssociation: 'Z_PAYMENT_ADMIN',
+    description: 'Receive customer payments in Cash/Cheque against outstanding invoices and credit shop ledger.'
+  },
+  {
+    module: 'Payment Management',
+    parentModule: 'Sales',
+    tCode: 'PA02',
+    transactionName: 'Change Payment',
+    actionType: 'Change',
+    roleAssociation: 'Z_PAYMENT_ADMIN',
+    description: 'Modify payment metadata, cheque details, or remarks.'
+  },
+  {
+    module: 'Payment Management',
+    parentModule: 'Sales',
+    tCode: 'PA03',
+    transactionName: 'Display Payment',
+    actionType: 'Display',
+    roleAssociation: 'Z_PAYMENT_VIEWER',
+    description: 'Display and print payment document voucher and invoice settlement breakdown.'
+  },
+  {
     module: 'Order Management',
     parentModule: 'Sales',
     tCode: 'VA03',

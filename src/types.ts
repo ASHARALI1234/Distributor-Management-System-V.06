@@ -368,6 +368,9 @@ export interface Invoice {
   total_discount: number;
   total_tax: number;
   net_amount: number;
+  paid_amount?: number;
+  outstanding_amount?: number;
+  last_payment_doc_no?: string;
   items_summary?: string;
   status: 'draft' | 'open' | 'posted' | 'paid' | 'cancelled';
   created_at: string;
@@ -506,5 +509,59 @@ export interface AIInquiryStats {
   intents_breakdown: { intent: string; count: number }[];
   channels_breakdown: { channel: string; count: number }[];
 }
+
+export interface PaymentInvoiceDetail {
+  payment_invoice_id?: number;
+  id?: number;
+  payment_id?: number;
+  invoice_id: number;
+  invoice_date?: string;
+  invoice_net_amount: number;
+  allocated_amount: number;
+  previous_outstanding: number;
+  remaining_outstanding: number;
+  invoice_status?: string;
+}
+
+export interface Payment {
+  id: number;
+  payment_doc_no: string;
+  shop_id: number;
+  shop_name?: string;
+  owner_name?: string;
+  shop_phone?: string;
+  shop_address?: string;
+  shop_area?: string;
+  shop_subarea?: string;
+  shop_credit_limit?: number;
+  amount: number;
+  payment_date: string;
+  payment_method: 'CASH' | 'CHEQUE';
+  distributor_id?: number;
+  distributor_name?: string;
+  distributor_code?: string;
+  distributor_address?: string;
+  distributor_phone?: string;
+  distributor_ntn?: string;
+  distributor_strn?: string;
+  distributor_city?: string;
+  salesman_id?: number;
+  salesman_name?: string;
+  salesman_display_name?: string;
+  cheque_no?: string;
+  cheque_date?: string;
+  bank_name?: string;
+  bank_branch?: string;
+  cash_amount?: number;
+  cheque_amount?: number;
+  notes?: string;
+  status: 'completed' | 'cancelled';
+  invoice_count?: number;
+  invoice_refs?: string;
+  invoices?: PaymentInvoiceDetail[];
+  current_shop_balance?: number;
+  created_at?: string;
+}
+
 
 

@@ -19,6 +19,7 @@ import {
   FileText, 
   Printer,
   CreditCard,
+  Banknote,
   Store,
   ChevronRight,
   ChevronLeft,
@@ -96,7 +97,8 @@ import {
   SalesReturn,
   SalesReturnItem,
   AuthUser,
-  Distributor
+  Distributor,
+  Payment
 } from './types';
 
 // Modal component imports
@@ -104,6 +106,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { UserManagementModal } from './components/modals/UserManagementModal';
 import { DistributorMasterModal } from './components/modals/DistributorMasterModal';
 import { InvoiceTransactionModal, EditInvoiceModal, DisplayInvoiceModal } from './components/modals/InvoiceModals';
+import { PaymentModal, DisplayPaymentModal } from './components/modals/PaymentModals';
 import { 
   DisplayOrderModal, 
   DisplayDeliveryModal, 
@@ -511,7 +514,7 @@ export default function App() {
   const [masterDataSubTab, setMasterDataSubTab] = useState<'products' | 'shops' | 'suppliers' | 'order_bookers' | 'salesmen' | 'drivers' | 'locations' | 'distributors' | 'units'>(
     (localStorage.getItem('dms_masterDataSubTab') as any) || 'products'
   );
-  const [transactionsSubTab, setTransactionsSubTab] = useState<'purchases' | 'orders' | 'deliveries' | 'delivery_returns' | 'load_plans' | 'invoices' | 'sales_returns'>(
+  const [transactionsSubTab, setTransactionsSubTab] = useState<'purchases' | 'orders' | 'deliveries' | 'delivery_returns' | 'load_plans' | 'invoices' | 'sales_returns' | 'payments'>(
     (localStorage.getItem('dms_transactionsSubTab') as any) || 'orders'
   );
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -525,6 +528,14 @@ export default function App() {
   const [returns, setReturns] = useState<Return[]>([]);
   const [salesReturns, setSalesReturns] = useState<SalesReturn[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentModalMode, setPaymentModalMode] = useState<'create' | 'edit'>('create');
+  const [editingPaymentId, setEditingPaymentId] = useState<number | null>(null);
+  const [isDisplayPaymentModalOpen, setIsDisplayPaymentModalOpen] = useState(false);
+  const [displayPaymentId, setDisplayPaymentId] = useState<number | null>(null);
+  const [paymentSearchInput, setPaymentSearchInput] = useState('');
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState<'all' | 'CASH' | 'CHEQUE'>('all');
   const [valuation, setValuation] = useState<StockValuationReport | null>(null);
   const [selectedReportTitle, setSelectedReportTitle] = useState<string | null>(null);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -586,7 +597,8 @@ export default function App() {
   const canAccessTransactions = isSuperAdmin || hasAnyTCode(
     'ME21N', 'ME03', 'PUR01', 'PUR02', 'VA01', 'VA02', 'VA03', 'OR01', 'OR05', 'ORD02',
     'DLVY', 'DL01', 'DL05', 'VL03', 'DEL01', 'DEL02', 'RT01', 'PGR01', 'DRT01',
-    'INV01', 'VF01', 'VF02', 'VF03', 'STI01', 'SRT01', 'PRT01', 'LP01', 'LPR01'
+    'INV01', 'VF01', 'VF02', 'VF03', 'STI01', 'SRT01', 'PRT01', 'LP01', 'LPR01',
+    'PA01', 'PA02', 'PA03'
   );
 
   const canAccessReports = isSuperAdmin || hasAnyTCode(
@@ -618,6 +630,7 @@ export default function App() {
     { id: 'deliveries', label: 'Deliveries', icon: Truck, tcodes: ['DLVY', 'DL01', 'DL05', 'VL03', 'DEL01', 'DEL02'] },
     { id: 'delivery_returns', label: 'Delivery Return', icon: RotateCcw, tcodes: ['RT01', 'PGR01', 'DRT01', 'DL05'] },
     { id: 'invoices', label: 'Invoices', icon: FileText, tcodes: ['INV01', 'VF01', 'VF02', 'VF03', 'STI01'] },
+    { id: 'payments', label: 'Payments', icon: CreditCard, tcodes: ['PA01', 'PA02', 'PA03'] },
     { id: 'sales_returns', label: 'Sales Return', icon: RotateCcw, tcodes: ['SRT01', 'RT01'] },
     { id: 'load_plans', label: 'Load Plans', icon: Truck, tcodes: ['LP01', 'LPR01'] },
   ];
@@ -1016,6 +1029,8 @@ export default function App() {
       setIsPurchaseReturnModalOpen(false);
       setIsInvoiceModalOpen(false);
       setIsDisplayInvoiceModalOpen(false);
+      setIsPaymentModalOpen(false);
+      setIsDisplayPaymentModalOpen(false);
       setIsDisplayOrderModalOpen(false);
       setIsDisplayDeliveryModalOpen(false);
       setIsDisplayPurchaseModalOpen(false);
@@ -1033,12 +1048,14 @@ export default function App() {
       }
     }
 
+    const baseCode = finalCode.split(/\s+/)[0];
+
     // Universal / Session commands
-    const isSessionCode = ['EXIT', 'LOGOUT', 'LOCK', 'DASH', 'REPT', 'TC01', 'HELP'].includes(finalCode);
+    const isSessionCode = ['EXIT', 'LOGOUT', 'LOCK', 'DASH', 'REPT', 'TC01', 'HELP'].includes(baseCode);
 
     // Permission enforcement: Super Admin has full access; other users require T-Code in permitted_tcodes
     if (!isSessionCode) {
-      const isPermitted = isSuperAdmin || (currentUser?.permitted_tcodes && currentUser.permitted_tcodes.some(c => c.toUpperCase() === finalCode.toUpperCase()));
+      const isPermitted = isSuperAdmin || (currentUser?.permitted_tcodes && currentUser.permitted_tcodes.some(c => c.toUpperCase() === baseCode.toUpperCase()));
       if (!isPermitted) {
         setTCodeError(`ACCESS DENIED: ${finalCode}`);
         setToast({
@@ -1049,7 +1066,7 @@ export default function App() {
       }
     }
 
-    switch (finalCode) {
+    switch (baseCode) {
       // AI & Smart Desk
       case 'AI01':
       case 'INQ01':
@@ -1130,6 +1147,37 @@ export default function App() {
           setDisplayInvoiceId(null);
         }
         setIsDisplayInvoiceModalOpen(true);
+        setIsCommandExpanded(false);
+        break;
+      }
+      case 'PA01':
+        setPaymentModalMode('create');
+        setEditingPaymentId(null);
+        setIsPaymentModalOpen(true);
+        setIsCommandExpanded(false);
+        break;
+      case 'PA02': {
+        const parts = finalCode.split(/\s+/);
+        if (parts.length > 1) {
+          const pId = parseInt(parts[1].replace(/[^0-9]/g, ''));
+          setEditingPaymentId(!isNaN(pId) ? pId : null);
+        } else {
+          setEditingPaymentId(null);
+        }
+        setPaymentModalMode('edit');
+        setIsPaymentModalOpen(true);
+        setIsCommandExpanded(false);
+        break;
+      }
+      case 'PA03': {
+        const parts = finalCode.split(/\s+/);
+        if (parts.length > 1) {
+          const pId = parseInt(parts[1].replace(/[^0-9]/g, ''));
+          setDisplayPaymentId(!isNaN(pId) ? pId : null);
+        } else {
+          setDisplayPaymentId(null);
+        }
+        setIsDisplayPaymentModalOpen(true);
         setIsCommandExpanded(false);
         break;
       }
@@ -1320,6 +1368,7 @@ export default function App() {
   useEffect(() => {
     fetchBatchInit();
     fetchSalesReturns();
+    fetchPayments();
   }, [currentUser, selectedDistributorId]);
 
   // Intercept query params to auto-display report on external tab load (useful for PDF printing bypass)
@@ -1487,6 +1536,32 @@ export default function App() {
     return true;
   });
 
+  const filteredPayments = payments.filter(p => {
+    if (paymentMethodFilter !== 'all' && p.payment_method !== paymentMethodFilter) {
+      return false;
+    }
+    if (paymentSearchInput) {
+      const q = paymentSearchInput.toLowerCase();
+      const matchDoc = p.payment_doc_no?.toLowerCase().includes(q) || p.id.toString().includes(q);
+      const matchShop = p.shop_name?.toLowerCase().includes(q);
+      const matchOwner = p.owner_name?.toLowerCase().includes(q);
+      const matchSalesman = (p.salesman_display_name || p.salesman_name || '').toLowerCase().includes(q);
+      const matchBank = p.bank_name?.toLowerCase().includes(q);
+      const matchCheque = p.cheque_no?.toLowerCase().includes(q);
+      const matchArea = p.shop_area?.toLowerCase().includes(q);
+      const matchDate = p.payment_date ? new Date(p.payment_date).toLocaleDateString().includes(paymentSearchInput) : false;
+      return matchDoc || matchShop || matchOwner || matchSalesman || matchBank || matchCheque || matchArea || matchDate;
+    }
+    return true;
+  });
+
+  const paymentStats = {
+    totalAmount: filteredPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0),
+    totalCash: filteredPayments.filter(p => p.payment_method === 'CASH').reduce((acc, p) => acc + (Number(p.amount) || 0), 0),
+    totalCheque: filteredPayments.filter(p => p.payment_method === 'CHEQUE').reduce((acc, p) => acc + (Number(p.amount) || 0), 0),
+    count: filteredPayments.length
+  };
+
   const filteredLoadPlans = loadPlans.filter(lp => {
     const searchLower = loadPlanSearchInput.toLowerCase();
     if (loadPlanSearchInput && !(
@@ -1532,6 +1607,18 @@ export default function App() {
       setInvoices(data);
     } catch (err) {
       console.error("Failed to fetch invoices", err);
+    }
+  };
+
+  const fetchPayments = async () => {
+    try {
+      const res = await fetch(`/api/payments${getDistParam()}`);
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const data = await res.json();
+      setPayments(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to fetch payments", err);
+      setPayments([]);
     }
   };
 
@@ -4711,6 +4798,20 @@ export default function App() {
                                         </button>
                                       </>
                                     )}
+                                    {invoice.status === 'posted' && (
+                                      <button 
+                                        onClick={() => {
+                                          setEditingPaymentId(null);
+                                          setPaymentModalMode('create');
+                                          setIsPaymentModalOpen(true);
+                                        }}
+                                        className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-all"
+                                        title="Receive Payment for Shop (PA01)"
+                                      >
+                                        <CreditCard size={13} />
+                                        <span>Pay</span>
+                                      </button>
+                                    )}
                                     <button 
                                       onClick={() => {
                                         setDisplayInvoiceId(invoice.id);
@@ -4749,6 +4850,299 @@ export default function App() {
                             {invoices.length === 0 && (
                               <tr>
                                 <td colSpan={9} className="px-6 py-12 text-center text-slate-400 italic">No invoices found. Generate an invoice from pending deliveries.</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {transactionsSubTab === 'payments' && (
+                    <div className="space-y-6">
+                      {/* Metric Summary Cards */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Collections</p>
+                            <h4 className="text-xl font-black text-slate-900 mt-1">{formatPKR(paymentStats.totalAmount)}</h4>
+                            <p className="text-[11px] text-slate-400 mt-0.5">{paymentStats.count} Total Payments</p>
+                          </div>
+                          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                            <DollarSign size={24} />
+                          </div>
+                        </div>
+
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Cash Received</p>
+                            <h4 className="text-xl font-black text-emerald-600 mt-1">{formatPKR(paymentStats.totalCash)}</h4>
+                            <p className="text-[11px] text-slate-400 mt-0.5">Direct Cash in Hand</p>
+                          </div>
+                          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                            <Banknote size={24} />
+                          </div>
+                        </div>
+
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Cheque Instruments</p>
+                            <h4 className="text-xl font-black text-indigo-600 mt-1">{formatPKR(paymentStats.totalCheque)}</h4>
+                            <p className="text-[11px] text-slate-400 mt-0.5">Bank Cheques Pending/Clearing</p>
+                          </div>
+                          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                            <CreditCard size={24} />
+                          </div>
+                        </div>
+
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Posted Vouchers</p>
+                            <h4 className="text-xl font-black text-purple-600 mt-1">{paymentStats.count}</h4>
+                            <p className="text-[11px] text-slate-400 mt-0.5">Ledger Credited Records</p>
+                          </div>
+                          <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                            <FileText size={24} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Filter & Actions Bar */}
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex flex-1 items-center gap-3">
+                          <div className="relative flex-1 max-w-md">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                            <input 
+                              type="text"
+                              value={paymentSearchInput}
+                              onChange={(e) => setPaymentSearchInput(e.target.value)}
+                              placeholder="Search by Doc #, Shop, Salesman, Cheque #..."
+                              className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm focus:border-indigo-600 outline-none transition-all shadow-sm"
+                            />
+                            {paymentSearchInput && (
+                              <button
+                                onClick={() => setPaymentSearchInput('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                              >
+                                <X size={16} />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Method Filter Pills */}
+                          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                            <button
+                              onClick={() => setPaymentMethodFilter('all')}
+                              className={cn(
+                                "px-3 py-1.5 rounded-lg transition-all",
+                                paymentMethodFilter === 'all' ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
+                              )}
+                            >
+                              All
+                            </button>
+                            <button
+                              onClick={() => setPaymentMethodFilter('CASH')}
+                              className={cn(
+                                "px-3 py-1.5 rounded-lg transition-all",
+                                paymentMethodFilter === 'CASH' ? "bg-emerald-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                              )}
+                            >
+                              Cash
+                            </button>
+                            <button
+                              onClick={() => setPaymentMethodFilter('CHEQUE')}
+                              className={cn(
+                                "px-3 py-1.5 rounded-lg transition-all",
+                                paymentMethodFilter === 'CHEQUE' ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                              )}
+                            >
+                              Cheque
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Top Action Buttons */}
+                        <div className="flex flex-wrap gap-2">
+                          <button 
+                            onClick={() => {
+                              setDisplayPaymentId(null);
+                              setIsDisplayPaymentModalOpen(true);
+                            }}
+                            className="bg-slate-900 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all shadow-md shadow-slate-200 flex items-center gap-2"
+                            title="Display Payment Voucher (PA03)"
+                          >
+                            <FileText size={18} />
+                            <span>Display Voucher (PA03)</span>
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setEditingPaymentId(null);
+                              setPaymentModalMode('edit');
+                              setIsPaymentModalOpen(true);
+                            }}
+                            className="bg-amber-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-amber-700 transition-all shadow-md shadow-amber-100 flex items-center gap-2"
+                            title="Change Payment (PA02)"
+                          >
+                            <Edit size={18} />
+                            <span>Change Payment (PA02)</span>
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setEditingPaymentId(null);
+                              setPaymentModalMode('create');
+                              setIsPaymentModalOpen(true);
+                            }}
+                            className="bg-emerald-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
+                            title="Receive Payment (PA01)"
+                          >
+                            <Plus size={18} />
+                            <span>Receive Payment (PA01)</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Payment Records Table */}
+                      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-100">
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Document #</th>
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Customer / Shop</th>
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Salesman</th>
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Method & Reference</th>
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Settled Invoices</th>
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Amount Received</th>
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filteredPayments.map(payment => (
+                              <tr 
+                                key={payment.id} 
+                                onClick={() => {
+                                  setDisplayPaymentId(payment.id);
+                                  setIsDisplayPaymentModalOpen(true);
+                                }}
+                                className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
+                              >
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-col">
+                                    <span className="text-sm font-mono font-bold text-indigo-600 group-hover:underline flex items-center gap-1.5">
+                                      <FileText size={14} className="text-slate-400" />
+                                      {payment.payment_doc_no || `#PAY-${payment.id.toString().padStart(4, '0')}`}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 font-mono">ID: {payment.id}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-col">
+                                    <span className="text-sm font-bold text-slate-900 uppercase tracking-tight">{payment.shop_name}</span>
+                                    <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+                                      {payment.owner_name && <span>{payment.owner_name}</span>}
+                                      {payment.shop_area && (
+                                        <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] text-slate-600 font-medium">
+                                          {payment.shop_area}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className="text-sm text-slate-600">{new Date(payment.payment_date).toLocaleDateString()}</span>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className="text-sm font-medium text-slate-700">{payment.salesman_display_name || payment.salesman_name || 'Unassigned'}</span>
+                                </td>
+                                <td className="px-6 py-4">
+                                  {payment.payment_method === 'CASH' ? (
+                                    <span className="px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1">
+                                      <Banknote size={12} className="text-emerald-600" />
+                                      CASH
+                                    </span>
+                                  ) : (
+                                    <div className="flex flex-col">
+                                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200 inline-flex items-center gap-1 w-fit">
+                                        <CreditCard size={12} className="text-indigo-600" />
+                                        CHEQUE
+                                      </span>
+                                      <span className="text-[11px] text-slate-500 font-medium mt-0.5">
+                                        {payment.bank_name || 'Bank'} {payment.cheque_no ? `• #${payment.cheque_no}` : ''}
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4">
+                                  {payment.settled_invoices_summary ? (
+                                    <div className="flex flex-wrap gap-1 max-w-[200px]">
+                                      {payment.settled_invoices_summary.split(',').map((invNo, idx) => (
+                                        <span key={idx} className="bg-slate-100 text-slate-700 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-200">
+                                          {invNo.trim()}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-slate-400 italic">General Receipt</span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 text-right">
+                                  <span className="text-sm font-bold text-emerald-600 font-mono">
+                                    {formatPKR(payment.amount)}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button 
+                                      onClick={() => {
+                                        setDisplayPaymentId(payment.id);
+                                        setIsDisplayPaymentModalOpen(true);
+                                      }}
+                                      className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors opacity-80 group-hover:opacity-100"
+                                      title="Display / Print Voucher (PA03)"
+                                    >
+                                      <Printer size={18} />
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        setEditingPaymentId(payment.id);
+                                        setPaymentModalMode('edit');
+                                        setIsPaymentModalOpen(true);
+                                      }}
+                                      className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors opacity-80 group-hover:opacity-100"
+                                      title="Change Payment (PA02)"
+                                    >
+                                      <Edit size={18} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                            {filteredPayments.length === 0 && (
+                              <tr>
+                                <td colSpan={8} className="px-6 py-16 text-center">
+                                  <div className="max-w-xs mx-auto flex flex-col items-center">
+                                    <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mb-4">
+                                      <CreditCard size={32} />
+                                    </div>
+                                    <h4 className="text-base font-bold text-slate-800">No payment records found</h4>
+                                    <p className="text-xs text-slate-400 mt-1 mb-4">
+                                      {paymentSearchInput || paymentMethodFilter !== 'all' 
+                                        ? "No payments match your current search or filter criteria." 
+                                        : "Collect payments from shops against posted invoices to update customer ledgers."}
+                                    </p>
+                                    <button
+                                      onClick={() => {
+                                        setEditingPaymentId(null);
+                                        setPaymentModalMode('create');
+                                        setIsPaymentModalOpen(true);
+                                      }}
+                                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-emerald-100 transition-all"
+                                    >
+                                      <Plus size={16} />
+                                      <span>Receive Payment (PA01)</span>
+                                    </button>
+                                  </div>
+                                </td>
                               </tr>
                             )}
                           </tbody>
@@ -5193,6 +5587,54 @@ export default function App() {
               setIsDisplayInvoiceModalOpen(false);
               setDisplayInvoiceId(null);
               setIsInvoiceModalOpen(true);
+            }}
+          />
+        )}
+        {isPaymentModalOpen && (
+          <PaymentModal 
+            isOpen={isPaymentModalOpen}
+            mode={paymentModalMode}
+            paymentId={editingPaymentId}
+            distributorId={selectedDistributorId}
+            formatPKR={formatPKR}
+            currentUser={currentUser}
+            onClose={() => {
+              setIsPaymentModalOpen(false);
+              setEditingPaymentId(null);
+            }}
+            onSuccess={() => {
+              fetchPayments();
+              fetchInvoices();
+              fetchBatchInit();
+            }}
+            onOpenDisplayPayment={(pId) => {
+              setDisplayPaymentId(Number(pId));
+              setIsDisplayPaymentModalOpen(true);
+            }}
+          />
+        )}
+        {isDisplayPaymentModalOpen && (
+          <DisplayPaymentModal 
+            isOpen={isDisplayPaymentModalOpen}
+            paymentId={displayPaymentId}
+            formatPKR={formatPKR}
+            onClose={() => {
+              setIsDisplayPaymentModalOpen(false);
+              setDisplayPaymentId(null);
+            }}
+            onOpenEditPayment={(pId) => {
+              setIsDisplayPaymentModalOpen(false);
+              setDisplayPaymentId(null);
+              setEditingPaymentId(pId);
+              setPaymentModalMode('edit');
+              setIsPaymentModalOpen(true);
+            }}
+            onOpenNewPayment={() => {
+              setIsDisplayPaymentModalOpen(false);
+              setDisplayPaymentId(null);
+              setEditingPaymentId(null);
+              setPaymentModalMode('create');
+              setIsPaymentModalOpen(true);
             }}
           />
         )}

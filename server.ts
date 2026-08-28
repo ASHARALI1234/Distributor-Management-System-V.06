@@ -591,6 +591,74 @@ try {
     console.error("inventory_audit_log table creation error:", e);
   }
 
+  // Payment Management (PA01, PA02, PA03) Schema & Migrations
+  try {
+    // 1. Safe columns for payments table
+    try { db.exec("ALTER TABLE payments ADD COLUMN payment_doc_no TEXT"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN salesman_id INTEGER REFERENCES salesmen(id)"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN salesman_name TEXT"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN cheque_no TEXT"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN cheque_date TEXT"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN bank_name TEXT"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN bank_branch TEXT"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN cash_amount REAL DEFAULT 0"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN cheque_amount REAL DEFAULT 0"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN notes TEXT"); } catch(e) {}
+    try { db.exec("ALTER TABLE payments ADD COLUMN status TEXT DEFAULT 'completed'"); } catch(e) {}
+
+    // 2. Safe columns for invoices table
+    try { db.exec("ALTER TABLE invoices ADD COLUMN paid_amount REAL DEFAULT 0"); } catch(e) {}
+    try { db.exec("ALTER TABLE invoices ADD COLUMN outstanding_amount REAL"); } catch(e) {}
+    try { db.exec("ALTER TABLE invoices ADD COLUMN last_payment_doc_no TEXT"); } catch(e) {}
+
+    // 3. Payment Invoices junction table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS payment_invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        payment_id INTEGER NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+        invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+        invoice_net_amount REAL NOT NULL,
+        allocated_amount REAL NOT NULL,
+        previous_outstanding REAL NOT NULL,
+        remaining_outstanding REAL NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_payment_invoices_pid ON payment_invoices(payment_id);
+      CREATE INDEX IF NOT EXISTS idx_payment_invoices_invid ON payment_invoices(invoice_id);
+    `);
+
+    // 4. Backfill existing invoices outstanding_amount
+    db.exec(`
+      UPDATE invoices
+      SET paid_amount = COALESCE(paid_amount, 0),
+          outstanding_amount = COALESCE(outstanding_amount, net_amount - COALESCE(paid_amount, 0)),
+          status = CASE 
+            WHEN status = 'paid' AND (SELECT COUNT(*) FROM payment_invoices WHERE invoice_id = invoices.id) = 0 THEN 'posted'
+            ELSE status 
+          END
+      WHERE outstanding_amount IS NULL OR (status = 'paid' AND (SELECT COUNT(*) FROM payment_invoices WHERE invoice_id = invoices.id) = 0);
+    `);
+
+    // 5. Ensure shops with open invoices have debit records in client_ledger if empty
+    const shopsWithInvoices = db.prepare(`
+      SELECT shop_id, SUM(net_amount) as total_inv 
+      FROM invoices 
+      WHERE status != 'cancelled' 
+      GROUP BY shop_id
+    `).all() as { shop_id: number; total_inv: number }[];
+
+    for (const sw of shopsWithInvoices) {
+      const existingLedger = db.prepare("SELECT COUNT(*) as count FROM client_ledger WHERE shop_id = ?").get(sw.shop_id) as { count: number };
+      if (existingLedger.count === 0 && sw.total_inv > 0) {
+        db.prepare(`
+          INSERT INTO client_ledger (shop_id, date, description, debit, credit, balance)
+          VALUES (?, datetime('now', '-1 day'), 'Initial Invoices Balance', ?, 0, ?)
+        `).run(sw.shop_id, sw.total_inv, sw.total_inv);
+      }
+    }
+  } catch (e) {
+    console.error("Payment module schema & migration error:", e);
+  }
+
   // Create Distributors table
   try {
     db.exec(`
@@ -797,7 +865,12 @@ try {
       { tcode: 'USR1', transaction_name: 'User & Security Management', module: 'System Administration', parent_module: 'Admin', action_type: 'Manage', description: 'Maintain login credentials, roles, and distributor scopes.' },
       { tcode: 'TC01', transaction_name: 'T-Code Dictionary & Directory', module: 'System Administration', parent_module: 'Admin', action_type: 'Display', description: 'SAP-style transaction code catalog and command helper.' },
       { tcode: 'AI01', transaction_name: 'AI Inquiry Desk & Automated Bot', module: 'Customer & Rep Service', parent_module: 'Transactions', action_type: 'Manage', description: 'Automated 24/7 inquiry resolution for customer ledgers, order tracking, prices, and dispatch.' },
-      { tcode: 'INQ01', transaction_name: 'AI Inquiry Telemetry & Audit Logs', module: 'Customer & Rep Service', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Real-time telemetry and audit logs of automated customer inquiries.' }
+      { tcode: 'INQ01', transaction_name: 'AI Inquiry Telemetry & Audit Logs', module: 'Customer & Rep Service', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Real-time telemetry and audit logs of automated customer inquiries.' },
+
+      // Payment Management
+      { tcode: 'PA01', transaction_name: 'Create Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Create', description: 'Receive customer payments in Cash/Cheque against outstanding invoices and credit shop ledger.' },
+      { tcode: 'PA02', transaction_name: 'Change Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Change', description: 'Modify payment receipt metadata, remarks, or cheque details.' },
+      { tcode: 'PA03', transaction_name: 'Display Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Display', description: 'Display and print payment document voucher and invoice settlement details.' }
     ];
 
     const insertTCode = db.prepare(`
@@ -841,7 +914,8 @@ try {
           'VA01', 'VA02', 'VA03', 'OR01', 'OR05', 'ORD02', 'DLVY', 'DL01', 'DL05',
           'VL03', 'LP01', 'INV01', 'VF03', 'STI01', 'RT01', 'SRT01', 'VD01', 'VD02',
           'VD03', 'SHM1', 'SH01', 'SH05', 'SH07', 'SH08', 'BP01', 'OBM1', 'SLM1',
-          'SM01', 'SM05', 'SM07', 'SM08', 'DRV1', 'LPR01', 'APS01', 'SDR01', 'DASH', 'REPT', 'TC01'
+          'SM01', 'SM05', 'SM07', 'SM08', 'DRV1', 'LPR01', 'APS01', 'SDR01', 'DASH', 'REPT', 'TC01',
+          'PA01', 'PA02', 'PA03'
         ]
       },
       {
@@ -857,7 +931,8 @@ try {
         name: 'DELIVERY_MAN',
         description: 'Logistics & Dispatch Driver executing deliveries, managing vehicle load plans, issuing delivery notes, and handling shop returns.',
         tcodes: [
-          'DLVY', 'DL01', 'DL05', 'VL03', 'LP01', 'INV01', 'VF03', 'STI01', 'RT01', 'SRT01', 'DRV1', 'LPR01', 'DASH', 'TC01'
+          'DLVY', 'DL01', 'DL05', 'VL03', 'LP01', 'INV01', 'VF03', 'STI01', 'RT01', 'SRT01', 'DRV1', 'LPR01', 'DASH', 'TC01',
+          'PA01', 'PA02', 'PA03'
         ]
       },
       {
@@ -875,7 +950,8 @@ try {
         name: 'ACCOUNTS_AUDITOR',
         description: 'Finance & Accounts Officer reviewing finalized invoices, tax registers, customer credit summaries, and valuation reports.',
         tcodes: [
-          'VF03', 'STI01', 'INV01', 'LPR01', 'APS01', 'SDR01', 'DASH', 'REPT', 'TC01'
+          'VF03', 'STI01', 'INV01', 'LPR01', 'APS01', 'SDR01', 'DASH', 'REPT', 'TC01',
+          'PA01', 'PA02', 'PA03'
         ]
       }
     ];
@@ -4916,9 +4992,9 @@ async function startServer() {
 
       // 2. Create Invoice
       const info = db.prepare(`
-        INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, status, distributor_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(shop_id, invoice_date, gross, totalDisc, totalTax, net, invStatus, distId);
+        INSERT INTO invoices (shop_id, invoice_date, gross_amount, total_discount, total_tax, net_amount, status, distributor_id, paid_amount, outstanding_amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+      `).run(shop_id, invoice_date, gross, totalDisc, totalTax, net, invStatus, distId, net);
       const invoiceId = info.lastInsertRowid;
 
       // 3. Create Invoice Items
@@ -5995,51 +6071,383 @@ async function startServer() {
     }
   });
 
-  app.post("/api/payments", (req, res) => {
-    const { shop_id, amount, payment_method, payment_date, distributor_id } = req.body;
-    const distId = distributor_id ? Number(distributor_id) : 1;
-    if (!shop_id || !amount) {
-      return res.status(400).json({ error: "Shop ID and amount are required" });
-    }
+  // ==========================================
+  // PAYMENT MANAGEMENT (PA01, PA02, PA03) APIS
+  // ==========================================
 
-    const transaction = db.transaction(() => {
-      // 1. Record payment
-      const paymentRes = db.prepare("INSERT INTO payments (shop_id, amount, payment_method, payment_date, distributor_id) VALUES (?, ?, ?, ?, ?)").run(
-        shop_id, amount, payment_method || 'Cash', payment_date || new Date().toISOString(), distId
-      );
-      
-      // 2. Update Client Ledger (Credit the shop for the payment)
-      const lastLedger = db.prepare("SELECT balance FROM client_ledger WHERE shop_id = ? ORDER BY id DESC LIMIT 1").get(shop_id) as any;
-      const currentBalance = (lastLedger?.balance || 0) - amount;
-
-      db.prepare(`
-        INSERT INTO client_ledger (shop_id, date, description, credit, balance)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(shop_id, payment_date || new Date().toISOString(), `Payment Received - ${payment_method || 'Cash'}`, amount, currentBalance);
-
-      return paymentRes.lastInsertRowid;
-    });
-
+  // Outstanding Invoices for Shop (for PA01 Payment Creation)
+  app.get("/api/shops/:id/outstanding-invoices", (req, res) => {
+    const { id } = req.params;
     try {
-      const paymentId = transaction();
-      res.json({ success: true, id: paymentId });
+      const invoices = db.prepare(`
+        SELECT 
+          i.id,
+          i.shop_id,
+          i.invoice_date,
+          i.gross_amount,
+          i.total_discount,
+          i.total_tax,
+          i.net_amount,
+          COALESCE(i.paid_amount, 0) as paid_amount,
+          COALESCE(i.outstanding_amount, (i.net_amount - COALESCE(i.paid_amount, 0))) as outstanding_amount,
+          i.status,
+          i.last_payment_doc_no,
+          s.shop_name,
+          s.owner_name,
+          s.phone,
+          s.area,
+          s.credit_limit
+        FROM invoices i
+        JOIN shops s ON i.shop_id = s.id
+        WHERE CAST(i.shop_id AS INTEGER) = CAST(? AS INTEGER)
+          AND i.status != 'cancelled'
+          AND i.status != 'draft'
+          AND COALESCE(i.outstanding_amount, (i.net_amount - COALESCE(i.paid_amount, 0))) > 0.01
+        ORDER BY i.invoice_date ASC, i.id ASC
+      `).all(id);
+
+      const lastLedger = db.prepare("SELECT balance FROM client_ledger WHERE shop_id = ? ORDER BY id DESC LIMIT 1").get(id) as any;
+      const currentLedgerBalance = lastLedger ? Number(lastLedger.balance) : 0;
+
+      res.json({
+        invoices,
+        current_ledger_balance: currentLedgerBalance
+      });
     } catch (err: any) {
-      console.error("Payment processing error:", err);
+      console.error("Failed to fetch outstanding invoices:", err);
       res.status(500).json({ error: err.message });
     }
   });
 
+  // Get Payments List
   app.get("/api/payments", (req, res) => {
     const distId = req.query.distributor_id && req.query.distributor_id !== 'all' ? Number(req.query.distributor_id) : null;
     const whereClause = distId ? `WHERE (p.distributor_id = ${distId} OR p.distributor_id IS NULL)` : '';
-    const payments = db.prepare(`
-      SELECT p.*, s.shop_name 
-      FROM payments p 
-      JOIN shops s ON p.shop_id = s.id 
-      ${whereClause}
-      ORDER BY p.payment_date DESC
-    `).all();
-    res.json(payments);
+    try {
+      const payments = db.prepare(`
+        SELECT 
+          p.*,
+          s.shop_name,
+          s.owner_name,
+          s.phone as shop_phone,
+          s.area as shop_area,
+          COALESCE(p.salesman_name, sm.name, 'General Salesman') as salesman_display_name,
+          (SELECT COUNT(*) FROM payment_invoices pi WHERE pi.payment_id = p.id) as invoice_count,
+          (SELECT GROUP_CONCAT('#INV-' || printf('%04d', pi.invoice_id), ', ') FROM payment_invoices pi WHERE pi.payment_id = p.id) as invoice_refs
+        FROM payments p 
+        JOIN shops s ON p.shop_id = s.id 
+        LEFT JOIN salesmen sm ON p.salesman_id = sm.id
+        ${whereClause}
+        ORDER BY p.id DESC
+      `).all();
+      res.json(payments);
+    } catch (err: any) {
+      console.error("Failed to list payments:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get Payment Details (PA03 Display Payment)
+  app.get("/api/payments/:id", (req, res) => {
+    const { id } = req.params;
+    try {
+      const payment = db.prepare(`
+        SELECT 
+          p.*,
+          s.shop_name,
+          s.owner_name,
+          s.phone as shop_phone,
+          s.address as shop_address,
+          s.area as shop_area,
+          s.subarea as shop_subarea,
+          s.credit_limit as shop_credit_limit,
+          COALESCE(sm.name, p.salesman_name, 'General Salesman') as salesman_display_name,
+          d.name as distributor_name,
+          d.code as distributor_code,
+          d.address as distributor_address,
+          d.phone as distributor_phone,
+          d.ntn_number as distributor_ntn,
+          d.strn_number as distributor_strn,
+          d.city as distributor_city
+        FROM payments p
+        JOIN shops s ON p.shop_id = s.id
+        LEFT JOIN salesmen sm ON p.salesman_id = sm.id
+        LEFT JOIN distributors d ON COALESCE(p.distributor_id, s.distributor_id, 1) = d.id
+        WHERE p.id = ? OR UPPER(p.payment_doc_no) = UPPER(?)
+      `).get(id, id) as any;
+
+      if (!payment) {
+        return res.status(404).json({ error: "Payment document not found" });
+      }
+
+      // Fetch linked invoice settlements
+      const settledInvoices = db.prepare(`
+        SELECT 
+          pi.id as payment_invoice_id,
+          pi.payment_id,
+          pi.invoice_id,
+          pi.invoice_net_amount,
+          pi.allocated_amount,
+          pi.previous_outstanding,
+          pi.remaining_outstanding,
+          i.invoice_date,
+          i.status as invoice_status
+        FROM payment_invoices pi
+        LEFT JOIN invoices i ON pi.invoice_id = i.id
+        WHERE pi.payment_id = ?
+        ORDER BY pi.invoice_id ASC
+      `).all(payment.id);
+
+      // Latest shop balance
+      const lastLedger = db.prepare("SELECT balance FROM client_ledger WHERE shop_id = ? ORDER BY id DESC LIMIT 1").get(payment.shop_id) as any;
+
+      res.json({
+        ...payment,
+        invoices: settledInvoices,
+        current_shop_balance: lastLedger ? Number(lastLedger.balance) : 0
+      });
+    } catch (err: any) {
+      console.error("Failed to get payment detail:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create Payment (PA01)
+  app.post("/api/payments", (req, res) => {
+    const {
+      shop_id,
+      payment_method,
+      amount,
+      cash_amount,
+      cheque_amount,
+      cheque_no,
+      cheque_date,
+      bank_name,
+      bank_branch,
+      salesman_id,
+      salesman_name,
+      notes,
+      payment_date,
+      distributor_id,
+      invoices: invoiceAllocations
+    } = req.body;
+
+    if (!shop_id) {
+      return res.status(400).json({ error: "Customer / Shop selection is required." });
+    }
+
+    const cleanMethod = (payment_method || 'CASH').toUpperCase();
+    if (cleanMethod !== 'CASH' && cleanMethod !== 'CHEQUE') {
+      return res.status(400).json({ error: "Payment method must be CASH or CHEQUE." });
+    }
+
+    let finalAmount = Number(amount) || 0;
+    if (cleanMethod === 'CASH') {
+      finalAmount = Number(cash_amount) || finalAmount;
+      if (finalAmount <= 0) {
+        return res.status(400).json({ error: "Valid Cash Amount is required." });
+      }
+    } else {
+      finalAmount = Number(cheque_amount) || finalAmount;
+      if (finalAmount <= 0) {
+        return res.status(400).json({ error: "Valid Cheque Amount is required." });
+      }
+      if (!cheque_no || !cheque_no.trim()) {
+        return res.status(400).json({ error: "Cheque Number is required for Cheque payment." });
+      }
+      if (!bank_name || !bank_name.trim()) {
+        return res.status(400).json({ error: "Bank Name is required for Cheque payment." });
+      }
+      if (!cheque_date) {
+        return res.status(400).json({ error: "Cheque Date is required." });
+      }
+    }
+
+    if (!Array.isArray(invoiceAllocations) || invoiceAllocations.length === 0) {
+      return res.status(400).json({ error: "Please select at least one outstanding invoice to settle." });
+    }
+
+    // Verify shop exists
+    const shop = db.prepare("SELECT * FROM shops WHERE id = ?").get(shop_id) as any;
+    if (!shop) {
+      return res.status(404).json({ error: "Selected shop does not exist." });
+    }
+
+    const distId = distributor_id ? Number(distributor_id) : (shop.distributor_id || 1);
+
+    const transaction = db.transaction(() => {
+      // 1. Insert preliminary payment record to get auto-increment ID
+      const pDate = payment_date ? new Date(payment_date).toISOString() : new Date().toISOString();
+      const insertPayStmt = db.prepare(`
+        INSERT INTO payments (
+          payment_doc_no, shop_id, amount, payment_date, payment_method, distributor_id,
+          salesman_id, salesman_name, cheque_no, cheque_date, bank_name, bank_branch,
+          cash_amount, cheque_amount, notes, status
+        ) VALUES ('TEMP', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')
+      `);
+
+      const payRes = insertPayStmt.run(
+        shop_id,
+        finalAmount,
+        pDate,
+        cleanMethod,
+        distId,
+        salesman_id ? Number(salesman_id) : null,
+        salesman_name || null,
+        cleanMethod === 'CHEQUE' ? cheque_no.trim() : null,
+        cleanMethod === 'CHEQUE' ? cheque_date : null,
+        cleanMethod === 'CHEQUE' ? bank_name.trim() : null,
+        cleanMethod === 'CHEQUE' ? (bank_branch ? bank_branch.trim() : null) : null,
+        cleanMethod === 'CASH' ? finalAmount : 0,
+        cleanMethod === 'CHEQUE' ? finalAmount : 0,
+        notes ? notes.trim() : null
+      );
+
+      const paymentId = Number(payRes.lastInsertRowid);
+      const paymentDocNo = `PAY-${String(paymentId).padStart(4, '0')}`;
+
+      // Update payment_doc_no
+      db.prepare("UPDATE payments SET payment_doc_no = ? WHERE id = ?").run(paymentDocNo, paymentId);
+
+      // 2. Allocate payment across selected invoices
+      let remainingPaymentPool = finalAmount;
+      const settledInvoiceIds: number[] = [];
+
+      for (const item of invoiceAllocations) {
+        const invId = Number(item.invoice_id || item.id);
+        const inv = db.prepare("SELECT * FROM invoices WHERE id = ?").get(invId) as any;
+        if (!inv) {
+          throw new Error(`Invoice #${invId} not found.`);
+        }
+
+        const prevPaid = Number(inv.paid_amount) || 0;
+        const netAmt = Number(inv.net_amount) || 0;
+        const currentOutstanding = inv.outstanding_amount !== null && inv.outstanding_amount !== undefined
+          ? Number(inv.outstanding_amount)
+          : Math.max(0, netAmt - prevPaid);
+
+        // Determine allocation: if user specified allocated_amount use that, else allocate from pool
+        let toAllocate = 0;
+        if (item.allocated_amount !== undefined && item.allocated_amount !== null) {
+          toAllocate = Math.min(Number(item.allocated_amount), currentOutstanding, remainingPaymentPool);
+        } else {
+          toAllocate = Math.min(currentOutstanding, remainingPaymentPool);
+        }
+
+        if (toAllocate <= 0 && remainingPaymentPool <= 0) {
+          continue;
+        }
+
+        remainingPaymentPool -= toAllocate;
+        const newPaid = prevPaid + toAllocate;
+        const newOutstanding = Math.max(0, Math.round((currentOutstanding - toAllocate) * 100) / 100);
+        const newStatus = newOutstanding <= 0.01 ? 'paid' : inv.status;
+
+        // Update Invoice record
+        db.prepare(`
+          UPDATE invoices 
+          SET paid_amount = ?, 
+              outstanding_amount = ?, 
+              last_payment_doc_no = ?,
+              status = ?
+          WHERE id = ?
+        `).run(newPaid, newOutstanding, paymentDocNo, newStatus, invId);
+
+        // Insert into payment_invoices junction table
+        db.prepare(`
+          INSERT INTO payment_invoices (
+            payment_id, invoice_id, invoice_net_amount, allocated_amount,
+            previous_outstanding, remaining_outstanding
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(paymentId, invId, netAmt, toAllocate, currentOutstanding, newOutstanding);
+
+        settledInvoiceIds.push(invId);
+      }
+
+      // 3. Update Client Ledger (Credit shop ledger for payment)
+      const lastLedger = db.prepare("SELECT balance FROM client_ledger WHERE shop_id = ? ORDER BY id DESC LIMIT 1").get(shop_id) as any;
+      const prevBal = lastLedger ? Number(lastLedger.balance) : 0;
+      const currentBalance = Math.round((prevBal - finalAmount) * 100) / 100;
+
+      const invRefs = settledInvoiceIds.map(i => `#INV-${String(i).padStart(4, '0')}`).join(', ');
+      const methodLabel = cleanMethod === 'CHEQUE' 
+        ? `CHEQUE #${cheque_no.trim()} (${bank_name.trim()})` 
+        : 'CASH';
+      const ledgerDescription = `Payment #${paymentDocNo} (${methodLabel}) - Invoices: ${invRefs || 'On Account'}`;
+
+      db.prepare(`
+        INSERT INTO client_ledger (shop_id, date, description, debit, credit, balance)
+        VALUES (?, ?, ?, 0, ?, ?)
+      `).run(shop_id, pDate, ledgerDescription, finalAmount, currentBalance);
+
+      return {
+        id: paymentId,
+        payment_doc_no: paymentDocNo,
+        amount: finalAmount,
+        payment_method: cleanMethod,
+        settled_invoices: settledInvoiceIds,
+        current_shop_balance: currentBalance
+      };
+    });
+
+    try {
+      const result = transaction();
+      res.status(201).json({ success: true, ...result });
+    } catch (err: any) {
+      console.error("Payment processing error:", err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Change Payment (PA02)
+  app.put("/api/payments/:id", (req, res) => {
+    const { id } = req.params;
+    const {
+      cheque_no,
+      cheque_date,
+      bank_name,
+      bank_branch,
+      salesman_id,
+      salesman_name,
+      notes,
+      payment_date
+    } = req.body;
+
+    try {
+      const payment = db.prepare("SELECT * FROM payments WHERE id = ?").get(id) as any;
+      if (!payment) {
+        return res.status(404).json({ error: "Payment not found." });
+      }
+
+      db.prepare(`
+        UPDATE payments
+        SET cheque_no = COALESCE(?, cheque_no),
+            cheque_date = COALESCE(?, cheque_date),
+            bank_name = COALESCE(?, bank_name),
+            bank_branch = COALESCE(?, bank_branch),
+            salesman_id = COALESCE(?, salesman_id),
+            salesman_name = COALESCE(?, salesman_name),
+            notes = COALESCE(?, notes),
+            payment_date = COALESCE(?, payment_date)
+        WHERE id = ?
+      `).run(
+        cheque_no ? cheque_no.trim() : null,
+        cheque_date || null,
+        bank_name ? bank_name.trim() : null,
+        bank_branch ? bank_branch.trim() : null,
+        salesman_id ? Number(salesman_id) : null,
+        salesman_name || null,
+        notes !== undefined ? notes.trim() : null,
+        payment_date || null,
+        id
+      );
+
+      const updated = db.prepare("SELECT * FROM payments WHERE id = ?").get(id);
+      res.json({ success: true, payment: updated });
+    } catch (err: any) {
+      console.error("Failed to update payment:", err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/suppliers", (req, res) => {
