@@ -1405,94 +1405,105 @@ try {
 
 // Seed Locations (Idempotent)
 try {
-  const countryCount = db.prepare("SELECT COUNT(*) as count FROM countries").get() as { count: number };
-  if (countryCount.count === 0) {
-    db.transaction(() => {
-      const country = db.prepare("INSERT OR IGNORE INTO countries (name) VALUES (?)").run("Pakistan");
-      const countryId = country.lastInsertRowid || (db.prepare("SELECT id FROM countries WHERE name = ?").get("Pakistan") as any)?.id;
+  db.transaction(() => {
+    db.prepare("INSERT OR IGNORE INTO countries (name) VALUES (?)").run("Pakistan");
+    const countryId = (db.prepare("SELECT id FROM countries WHERE name = ?").get("Pakistan") as any)?.id;
 
-      if (countryId) {
-        const province = db.prepare("INSERT OR IGNORE INTO provinces (country_id, name) VALUES (?, ?)").run(countryId, "Sindh");
-        const provinceId = province.lastInsertRowid || (db.prepare("SELECT id FROM provinces WHERE name = ? AND country_id = ?").get("Sindh", countryId) as any)?.id;
+    if (countryId) {
+      db.prepare("INSERT OR IGNORE INTO provinces (country_id, name) VALUES (?, ?)").run(countryId, "Sindh");
+      const provinceId = (db.prepare("SELECT id FROM provinces WHERE name = ? AND country_id = ?").get("Sindh", countryId) as any)?.id;
 
-        if (provinceId) {
-          const city = db.prepare("INSERT OR IGNORE INTO cities (province_id, name) VALUES (?, ?)").run(provinceId, "Karachi");
-          const cityId = city.lastInsertRowid || (db.prepare("SELECT id FROM cities WHERE name = ? AND province_id = ?").get("Karachi", provinceId) as any)?.id;
+      if (provinceId) {
+        db.prepare("INSERT OR IGNORE INTO cities (province_id, name) VALUES (?, ?)").run(provinceId, "Karachi");
+        const cityId = (db.prepare("SELECT id FROM cities WHERE name = ? AND province_id = ?").get("Karachi", provinceId) as any)?.id;
 
-          if (cityId) {
-            const locationData = [
-              {
-                town: "Gulshan-e-Iqbal Town",
-                areas: [
-                  {
-                    name: "Gulshan-e-Iqbal",
-                    subareas: ["UC-2 Gulshan-e-Iqbal (Main)", "UC-1 Essa Nagri", "UC-8 National Stadium Area"]
-                  },
-                  {
-                    name: "Gulistan-e-Jauhar (Safoora Town)",
-                    subareas: ["UC-7 Gulistan-e-Jauhar", "UC-8 Safari Park Area", "UC-6 Pahlwan Goth"]
-                  },
-                  {
-                    name: "Gulzar-e-Hijri",
-                    subareas: ["UC-2 Gulzar-e-Hijri", "UC-3 Sachal Goth", "UC-4 Al-Azhar Garden"]
-                  }
-                ]
-              },
-              {
-                town: "North Nazimabad Town",
-                areas: [
-                  {
-                    name: "North Nazimabad",
-                    subareas: ["UC-1 Sir Syed Town", "UC-5 Taimooria", "UC-7 Hyderi"]
-                  },
-                  {
-                    name: "Buffer Zone",
-                    subareas: ["UC-4 Buffer Zone I", "UC-6 Sakhi Hassan", "UC-10 Shadman Town"]
-                  },
-                  {
-                    name: "Sakhi Hassan & Surrounds",
-                    subareas: ["UC-2 Farooq-e-Azam", "UC-3 Siddiq-e-Akbar", "UC-9 Pahar Gunj"]
-                  }
-                ]
-              },
-              {
-                town: "Saddar Town",
-                areas: [
-                  {
-                    name: "Saddar & Civil Lines",
-                    subareas: ["UC-9 Hijrat Colony", "UC-10 Frere Town", "UC-11 Clifton / Boat Basin"]
-                  },
-                  {
-                    name: "Garden & Kharadar",
-                    subareas: ["UC-4 Nanakwara", "UC-5 Old Town (Kharadar)", "UC-6 City Railway Colony"]
-                  },
-                  {
-                    name: "Aram Bagh",
-                    subareas: ["UC-1 Bhim Pura", "UC-2 Ranchore Line", "UC-3 Gazdarabad"]
-                  }
-                ]
-              }
-            ];
+        if (cityId) {
+          const locationData = [
+            {
+              town: "Gulshan-e-Iqbal Town",
+              areas: [
+                {
+                  name: "Gulshan-e-Iqbal",
+                  subareas: ["UC-2 Gulshan-e-Iqbal (Main)", "UC-1 Essa Nagri", "UC-8 National Stadium Area", "Block 10", "Block 3", "Block 13-D"]
+                },
+                {
+                  name: "Gulistan-e-Jauhar (Safoora Town)",
+                  subareas: ["UC-7 Gulistan-e-Jauhar", "UC-8 Safari Park Area", "UC-6 Pahlwan Goth", "Block 1", "Block 14"]
+                },
+                {
+                  name: "Gulzar-e-Hijri",
+                  subareas: ["UC-2 Gulzar-e-Hijri", "UC-3 Sachal Goth", "UC-4 Al-Azhar Garden", "Quetta Town"]
+                }
+              ]
+            },
+            {
+              town: "North Nazimabad Town",
+              areas: [
+                {
+                  name: "North Nazimabad",
+                  subareas: ["UC-1 Sir Syed Town", "UC-5 Taimooria", "UC-7 Hyderi", "Block H", "Block I"]
+                },
+                {
+                  name: "Buffer Zone",
+                  subareas: ["UC-4 Buffer Zone I", "UC-6 Sakhi Hassan", "UC-10 Shadman Town", "Sector 11-A", "Sector 15-A"]
+                },
+                {
+                  name: "Sakhi Hassan & Surrounds",
+                  subareas: ["UC-2 Farooq-e-Azam", "UC-3 Siddiq-e-Akbar", "UC-9 Pahar Gunj"]
+                },
+                {
+                  name: "Surjani Town",
+                  subareas: ["Surjani Town Sector 4", "Surjani Town Sector 7", "Surjani Main Chowk"]
+                }
+              ]
+            },
+            {
+              town: "Saddar Town",
+              areas: [
+                {
+                  name: "Saddar & Civil Lines",
+                  subareas: [
+                    "UC-9 Hijrat Colony", 
+                    "UC-10 Frere Town", 
+                    "UC-11 Clifton / Boat Basin", 
+                    "Empress Market", 
+                    "Regal Chowk", 
+                    "Zaibunnisa Street", 
+                    "Block 2, Clifton", 
+                    "Boat Basin, Clifton", 
+                    "Block 5, Clifton"
+                  ]
+                },
+                {
+                  name: "Garden & Kharadar",
+                  subareas: ["UC-4 Nanakwara", "UC-5 Old Town (Kharadar)", "UC-6 City Railway Colony"]
+                },
+                {
+                  name: "Aram Bagh",
+                  subareas: ["UC-1 Bhim Pura", "UC-2 Ranchore Line", "UC-3 Gazdarabad"]
+                }
+              ]
+            }
+          ];
 
-            const townStmt = db.prepare("INSERT OR IGNORE INTO towns (city_id, name) VALUES (?, ?)");
-            const areaStmt = db.prepare("INSERT OR IGNORE INTO areas (town_id, name) VALUES (?, ?)");
-            const subareaStmt = db.prepare("INSERT OR IGNORE INTO subareas (area_id, name) VALUES (?, ?)");
-            const findTownStmt = db.prepare("SELECT id FROM towns WHERE name = ? AND city_id = ?");
-            const findAreaStmt = db.prepare("SELECT id FROM areas WHERE name = ? AND town_id = ?");
+          const townStmt = db.prepare("INSERT OR IGNORE INTO towns (city_id, name) VALUES (?, ?)");
+          const areaStmt = db.prepare("INSERT OR IGNORE INTO areas (town_id, name) VALUES (?, ?)");
+          const subareaStmt = db.prepare("INSERT OR IGNORE INTO subareas (area_id, name) VALUES (?, ?)");
+          const findTownStmt = db.prepare("SELECT id FROM towns WHERE name = ? AND city_id = ?");
+          const findAreaStmt = db.prepare("SELECT id FROM areas WHERE name = ? AND town_id = ?");
 
-            for (const t of locationData) {
-              const town = townStmt.run(cityId, t.town);
-              const townId = town.lastInsertRowid || (findTownStmt.get(t.town, cityId) as any)?.id;
+          for (const t of locationData) {
+            townStmt.run(cityId, t.town);
+            const townId = (findTownStmt.get(t.town, cityId) as any)?.id;
 
-              if (townId) {
-                for (const a of t.areas) {
-                  const area = areaStmt.run(townId, a.name);
-                  const areaId = area.lastInsertRowid || (findAreaStmt.get(a.name, townId) as any)?.id;
+            if (townId) {
+              for (const a of t.areas) {
+                areaStmt.run(townId, a.name);
+                const areaId = (findAreaStmt.get(a.name, townId) as any)?.id;
 
-                  if (areaId) {
-                    for (const sa of a.subareas) {
-                      subareaStmt.run(areaId, sa);
-                    }
+                if (areaId) {
+                  for (const sa of a.subareas) {
+                    subareaStmt.run(areaId, sa);
                   }
                 }
               }
@@ -1500,10 +1511,44 @@ try {
           }
         }
       }
-    })();
-  }
+    }
+  })();
 } catch (err) {
   console.warn("Location seeding skipped or failed:", err);
+}
+
+// Ensure all shops in Master Data have proper AREA and SUB-AREA referencing location master tables
+try {
+  db.transaction(() => {
+    const shopMasterUpdates = [
+      { name: "Bismillah General Store", area: "Saddar & Civil Lines", subarea: "Zaibunnisa Street", location: "Zaibunnisa Street, Saddar", address: "Shop 14, Main Zaibunnisa Road, Saddar, Karachi", dist: 1 },
+      { name: "Madina Super Mart", area: "Gulshan-e-Iqbal", subarea: "UC-2 Gulshan-e-Iqbal (Main)", location: "UC-2 Gulshan-e-Iqbal (Main)", address: "Plot 12, Main University Road, Gulshan-e-Iqbal, Karachi", dist: 1 },
+      { name: "HYPER LINK SUPER MARKET & PHARMACY", area: "Gulshan-e-Iqbal", subarea: "Block 10", location: "Block 10, Gulshan-e-Iqbal", address: "Shop 1-3, Commercial Complex, Block 10, Gulshan-e-Iqbal, Karachi", dist: 1 },
+      { name: "ZAIQA MASALA", area: "Gulshan-e-Iqbal", subarea: "Block 3", location: "Block 3, Gulshan-e-Iqbal", address: "Shop 22, Commercial Market, Block 3, Gulshan-e-Iqbal, Karachi", dist: 1 },
+      { name: "B S MART", area: "North Nazimabad", subarea: "Block I", location: "Block I, North Nazimabad", address: "Shop 8, Block I Commercial Market, North Nazimabad, Karachi", dist: 1 },
+      { name: "LBM MART", area: "Gulzar-e-Hijri", subarea: "Quetta Town", location: "Quetta Town, Gulzar-e-Hijri", address: "Plot 5, Main Commercial Road, Quetta Town, Gulzar-e-Hijri, Karachi", dist: 1 },
+      { name: "OCTOBER NOW", area: "Saddar & Civil Lines", subarea: "Regal Chowk", location: "Regal Chowk, Saddar", address: "Shop 55, Near Regal Chowk, Saddar & Civil Lines, Karachi", dist: 1 },
+      { name: "FUTURE MART", area: "Buffer Zone", subarea: "Sector 11-A", location: "Sector 11-A, Buffer Zone", address: "Plot 18, Commercial Strip, Sector 11-A, Buffer Zone, Karachi", dist: 1 },
+      { name: "M.D MART", area: "Buffer Zone", subarea: "Sector 11-A", location: "Sector 11-A, Buffer Zone", address: "Shop 4, Sector 11-A, Buffer Zone, Karachi", dist: 1 },
+      { name: "MD MART", area: "Buffer Zone", subarea: "Sector 11-A", location: "Sector 11-A, Buffer Zone", address: "Shop 9, Sector 11-A, Buffer Zone, Karachi", dist: 1 },
+      { name: "USMAN GENERAL STORE", area: "Buffer Zone", subarea: "Sector 15-A", location: "Sector 15-A, Buffer Zone", address: "Plot 24, Main Road, Sector 15-A, Buffer Zone, Karachi", dist: 1 },
+      { name: "BIN MUMTAZ CASH AND CARRY", area: "Surjani Town", subarea: "Surjani Town Sector 4", location: "Surjani Town Sector 4", address: "Main Commercial Chowk, Sector 4, Surjani Town, Karachi", dist: 1 },
+      { name: "FJ FOODS STORE", area: "Surjani Town", subarea: "Surjani Town Sector 4", location: "Surjani Town Sector 4", address: "Shop 11, Commercial Market, Sector 4, Surjani Town, Karachi", dist: 1 },
+      { name: "Saddar Wholesale Super Mart", area: "Saddar & Civil Lines", subarea: "Empress Market", location: "Empress Market, Saddar", address: "Shop 12-14, Preedy Street, Empress Market, Saddar, Karachi", dist: 2 },
+      { name: "Regal Electronics & General Store", area: "Saddar & Civil Lines", subarea: "Regal Chowk", location: "Regal Chowk, Saddar", address: "Shop 5, Near Regal Chowk, Saddar, Karachi", dist: 2 },
+      { name: "Zaibunnisa Commercial Cash & Carry", area: "Saddar & Civil Lines", subarea: "Zaibunnisa Street", location: "Zaibunnisa Street, Saddar", address: "Plot 28, Zaibunnisa Street, Saddar, Karachi", dist: 2 },
+      { name: "Clifton Marine Supermarket", area: "Saddar & Civil Lines", subarea: "Block 2, Clifton", location: "Block 2, Clifton", address: "Shop 4-B, Main Clifton Road, Block 2, Clifton, Karachi", dist: 2 },
+      { name: "Boat Basin Express Grocery", area: "Saddar & Civil Lines", subarea: "Boat Basin, Clifton", location: "Boat Basin, Clifton", address: "Shop 18, Food Street Commercial, Boat Basin, Clifton, Karachi", dist: 2 },
+      { name: "Park Towers Gourmet Mart", area: "Saddar & Civil Lines", subarea: "Block 5, Clifton", location: "Block 5, Clifton", address: "Lower Ground Floor, Near Park Towers, Block 5, Clifton, Karachi", dist: 2 }
+    ];
+
+    const updateShopStmt = db.prepare("UPDATE shops SET area = ?, subarea = ?, location = ?, address = ?, distributor_id = COALESCE(distributor_id, ?) WHERE shop_name = ?");
+    for (const sm of shopMasterUpdates) {
+      updateShopStmt.run(sm.area, sm.subarea, sm.location, sm.address, sm.dist, sm.name);
+    }
+  })();
+} catch (err) {
+  console.warn("Shop area/subarea reconciliation skipped or failed:", err);
 }
 
 // Seed Area Wise Report Data
@@ -1541,24 +1586,24 @@ function seedAreaWiseReportData() {
       bookerStmt.run(b, phone);
     }
 
-    // 4. Ensure shops exist
+    // 4. Ensure shops exist with proper Area and Sub-area from Location Master
     const shopsToSeed = [
-      { name: "HYPER LINK SUPER MARKET & PHARMACY", location: "BLOCK 10", phone: "03008880001" },
-      { name: "ZAIQA MASALA", location: "BLOCK 3", phone: "03008880002" },
-      { name: "B S MART", location: "BLOCK I", phone: "03008880003" },
-      { name: "LBM MART", location: "QUETTA TOWN", phone: "03008880004" },
-      { name: "OCTOBER NOW", location: "SADDAR", phone: "03008880005" },
-      { name: "FUTURE MART", location: "SECTOR 11-A", phone: "03008880006" },
-      { name: "M.D MART", location: "SECTOR 11-A", phone: "03008880007" },
-      { name: "MD MART", location: "SECTOR 11-A", phone: "03008880008" },
-      { name: "USMAN GENERAL STORE", location: "SECTOR 15 A", phone: "03008880009" },
-      { name: "BIN MUMTAZ CASH AND CARRY", location: "SURJANI TOWN", phone: "03008880010" },
-      { name: "FJ FOODS STORE", location: "SURJANI TOWN", phone: "03008880011" }
+      { name: "HYPER LINK SUPER MARKET & PHARMACY", area: "Gulshan-e-Iqbal", subarea: "Block 10", location: "Block 10, Gulshan-e-Iqbal", address: "Shop 1-3, Commercial Complex, Block 10, Gulshan-e-Iqbal, Karachi", phone: "03008880001" },
+      { name: "ZAIQA MASALA", area: "Gulshan-e-Iqbal", subarea: "Block 3", location: "Block 3, Gulshan-e-Iqbal", address: "Shop 22, Commercial Market, Block 3, Gulshan-e-Iqbal, Karachi", phone: "03008880002" },
+      { name: "B S MART", area: "North Nazimabad", subarea: "Block I", location: "Block I, North Nazimabad", address: "Shop 8, Block I Commercial Market, North Nazimabad, Karachi", phone: "03008880003" },
+      { name: "LBM MART", area: "Gulzar-e-Hijri", subarea: "Quetta Town", location: "Quetta Town, Gulzar-e-Hijri", address: "Plot 5, Main Commercial Road, Quetta Town, Gulzar-e-Hijri, Karachi", phone: "03008880004" },
+      { name: "OCTOBER NOW", area: "Saddar & Civil Lines", subarea: "Regal Chowk", location: "Regal Chowk, Saddar", address: "Shop 55, Near Regal Chowk, Saddar & Civil Lines, Karachi", phone: "03008880005" },
+      { name: "FUTURE MART", area: "Buffer Zone", subarea: "Sector 11-A", location: "Sector 11-A, Buffer Zone", address: "Plot 18, Commercial Strip, Sector 11-A, Buffer Zone, Karachi", phone: "03008880006" },
+      { name: "M.D MART", area: "Buffer Zone", subarea: "Sector 11-A", location: "Sector 11-A, Buffer Zone", address: "Shop 4, Sector 11-A, Buffer Zone, Karachi", phone: "03008880007" },
+      { name: "MD MART", area: "Buffer Zone", subarea: "Sector 11-A", location: "Sector 11-A, Buffer Zone", address: "Shop 9, Sector 11-A, Buffer Zone, Karachi", phone: "03008880008" },
+      { name: "USMAN GENERAL STORE", area: "Buffer Zone", subarea: "Sector 15-A", location: "Sector 15-A, Buffer Zone", address: "Plot 24, Main Road, Sector 15-A, Buffer Zone, Karachi", phone: "03008880009" },
+      { name: "BIN MUMTAZ CASH AND CARRY", area: "Surjani Town", subarea: "Surjani Town Sector 4", location: "Surjani Town Sector 4", address: "Main Commercial Chowk, Sector 4, Surjani Town, Karachi", phone: "03008880010" },
+      { name: "FJ FOODS STORE", area: "Surjani Town", subarea: "Surjani Town Sector 4", location: "Surjani Town Sector 4", address: "Shop 11, Commercial Market, Sector 4, Surjani Town, Karachi", phone: "03008880011" }
     ];
 
-    const shopStmt = db.prepare("INSERT OR IGNORE INTO shops (shop_name, owner_name, location, phone, credit_limit) VALUES (?, 'Owner', ?, ?, 500000)");
+    const shopStmt = db.prepare("INSERT OR IGNORE INTO shops (shop_name, owner_name, area, subarea, location, address, phone, credit_limit, distributor_id) VALUES (?, 'Owner', ?, ?, ?, ?, ?, 500000, 1)");
     for (const s of shopsToSeed) {
-      shopStmt.run(s.name, s.location, s.phone);
+      shopStmt.run(s.name, s.area, s.subarea, s.location, s.address, s.phone);
     }
 
     // 5. Check if we already have transactions for June 16, 2021

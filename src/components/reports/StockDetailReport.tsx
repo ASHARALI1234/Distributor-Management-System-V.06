@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Printer, RefreshCw, Search, Calendar, ChevronDown, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Printer, RefreshCw, Search, Calendar, ChevronDown, Check, Loader2, Building2, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
 
@@ -10,6 +10,17 @@ interface Product {
   unit: string;
   purchase_price: number;
   trade_price: number;
+}
+
+interface Distributor {
+  id: number;
+  code: string;
+  name: string;
+  city?: string;
+  address?: string;
+  phone?: string;
+  strn?: string;
+  ntn?: string;
 }
 
 interface LedgerItem {
@@ -40,8 +51,16 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({
   currentUser
 }) => {
   const urlParams = new URLSearchParams(window.location.search);
-  const paramDistId = urlParams.get('distributor_id') || urlParams.get('distributorId');
-  const activeDistId = distributorId || paramDistId || (currentUser?.distributor_id ? String(currentUser.distributor_id) : 'all');
+  
+  // Distributor scoping logic
+  const userDistId = currentUser?.distributor_id ? String(currentUser.distributor_id) : null;
+  const canSwitchDistributor = isSuperAdmin || currentUser?.role === 'admin' || (!userDistId);
+  const defaultDistributor = canSwitchDistributor 
+    ? (distributorId || urlParams.get('distributor_id') || urlParams.get('distributorId') || 'all')
+    : (userDistId || '1');
+
+  const [distributors, setDistributors] = useState<Distributor[]>([]);
+  const [selectedDistributor, setSelectedDistributor] = useState<string>(String(defaultDistributor));
 
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
@@ -62,13 +81,37 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({
 
   const productSearchRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    fetchDistributors();
+  }, []);
+
+  const fetchDistributors = async () => {
+    try {
+      const res = await fetch('/api/distributors');
+      if (res.ok) {
+        const dData = await res.json();
+        setDistributors(dData);
+      }
+    } catch (e) {
+      console.error("Failed to load distributors", e);
+    }
+  };
+
+  useEffect(() => {
+    if (!canSwitchDistributor && userDistId) {
+      setSelectedDistributor(userDistId);
+    } else if (distributorId && String(distributorId) !== selectedDistributor) {
+      setSelectedDistributor(String(distributorId));
+    }
+  }, [distributorId, userDistId, canSwitchDistributor]);
+
   // Fetch products for autocomplete on mount or when distributor changes
   useEffect(() => {
     const fetchProducts = async () => {
       try {
         const queryParams = new URLSearchParams();
-        if (activeDistId && activeDistId !== 'all') {
-          queryParams.set('distributor_id', String(activeDistId));
+        if (selectedDistributor && selectedDistributor !== 'all') {
+          queryParams.set('distributor_id', String(selectedDistributor));
         }
         const res = await fetch(`/api/products?${queryParams.toString()}`);
         if (res.ok) {
@@ -91,7 +134,7 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({
       }
     };
     fetchProducts();
-  }, [activeDistId]);
+  }, [selectedDistributor]);
 
   // Sync search input with selection when blurred
   const handleProductBlur = () => {
@@ -126,8 +169,8 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({
       params.set('productId', selectedProductId);
       params.set('startDate', startDate);
       params.set('endDate', endDate);
-      if (activeDistId && activeDistId !== 'all') {
-        params.set('distributor_id', String(activeDistId));
+      if (selectedDistributor && selectedDistributor !== 'all') {
+        params.set('distributor_id', String(selectedDistributor));
       }
 
       const res = await fetch(`/api/reports/stock-detail?${params.toString()}`);
@@ -149,7 +192,9 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({
     if (selectedProductId) {
       fetchReport();
     }
-  }, [selectedProductId, activeDistId]);
+  }, [selectedProductId, selectedDistributor]);
+
+  const activeDistributorInfo = distributors.find(d => String(d.id) === String(selectedDistributor));
 
   const handlePrint = () => {
     window.print();
@@ -228,13 +273,47 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({
                 <span className="bg-emerald-50 text-emerald-700 text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-md font-mono">
                   Stock Ledger
                 </span>
+                {activeDistributorInfo && (
+                  <span className="bg-blue-50 text-blue-700 text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-md font-mono flex items-center gap-1">
+                    <Building2 size={12} />
+                    {activeDistributorInfo.code}
+                  </span>
+                )}
               </div>
               <h2 className="text-xl font-extrabold text-slate-900 tracking-tight mt-1">Stock Detail Report</h2>
-              <p className="text-xs text-slate-500">View detailed opening stock, purchases, sales, and running ledger for any product.</p>
+              <p className="text-xs text-slate-500">
+                View detailed opening stock, purchases, sales, and running ledger for any product.
+                {activeDistributorInfo ? ` Filtered for ${activeDistributorInfo.name}` : ''}
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {canSwitchDistributor ? (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
+                <Building2 size={14} className="text-indigo-600" />
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Distributor:</label>
+                <select
+                  value={selectedDistributor}
+                  onChange={(e) => setSelectedDistributor(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer"
+                  id="filter-distributor-select"
+                >
+                  <option value="all">All Distributors (Consolidated)</option>
+                  {distributors.map(d => (
+                    <option key={d.id} value={String(d.id)}>
+                      {d.code} - {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : activeDistributorInfo ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-700 text-xs font-bold">
+                <ShieldCheck size={14} className="text-indigo-600" />
+                <span>{activeDistributorInfo.code} - {activeDistributorInfo.name}</span>
+              </div>
+            ) : null}
+
             <button
               onClick={fetchReport}
               disabled={loading}
@@ -377,7 +456,12 @@ export const StockDetailReport: React.FC<StockDetailReportProps> = ({
           
           {/* Print Only Header (Styled identically to FBM Distributors layout) */}
           <div className="text-center space-y-1 mb-6">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">FBM Distributors</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900">
+              {activeDistributorInfo ? `${activeDistributorInfo.name} (${activeDistributorInfo.code})` : 'FBM Distributors'}
+            </h1>
+            {activeDistributorInfo?.address && (
+              <p className="text-[11px] text-slate-500 font-medium">{activeDistributorInfo.address}</p>
+            )}
             <h2 className="text-base font-extrabold tracking-wider text-slate-800 uppercase">STOCK DETAIL REPORT</h2>
             <p className="text-xs font-bold text-slate-600 font-mono">
               From [ {formatDateLabel(reportData.startDate)} ] To [ {formatDateLabel(reportData.endDate)} ]

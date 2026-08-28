@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Truck, Store, Package, Phone, User, CheckCircle, Code, Database, Printer, ChevronDown, ChevronUp, RefreshCw, Layers, X, ExternalLink, Calendar } from 'lucide-react';
+import { ArrowLeft, Truck, Store, Package, Phone, User, CheckCircle, Code, Database, Printer, ChevronDown, ChevronUp, RefreshCw, Layers, X, ExternalLink, Calendar, Building2, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ProductItem {
@@ -36,6 +36,17 @@ interface SubAreaLoadPlan {
   consolidatedLoadSummary: ConsolidatedLoadSummary[];
 }
 
+interface Distributor {
+  id: number;
+  code: string;
+  name: string;
+  city?: string;
+  address?: string;
+  phone?: string;
+  strn?: string;
+  ntn?: string;
+}
+
 interface DailyLoadPlanReportProps {
   onBack: () => void;
   formatPKR: (num: number) => string;
@@ -55,8 +66,16 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({
   const urlParams = new URLSearchParams(window.location.search);
   const initialStartDate = urlParams.get('startDate') || '2021-06-16';
   const initialEndDate = urlParams.get('endDate') || '2021-06-16';
-  const paramDistId = urlParams.get('distributor_id') || urlParams.get('distributorId');
-  const activeDistId = distributorId || paramDistId || (currentUser?.distributor_id ? String(currentUser.distributor_id) : 'all');
+
+  // Distributor scoping logic
+  const userDistId = currentUser?.distributor_id ? String(currentUser.distributor_id) : null;
+  const canSwitchDistributor = isSuperAdmin || currentUser?.role === 'admin' || (!userDistId);
+  const defaultDistributor = canSwitchDistributor 
+    ? (distributorId || urlParams.get('distributor_id') || urlParams.get('distributorId') || 'all')
+    : (userDistId || '1');
+
+  const [distributors, setDistributors] = useState<Distributor[]>([]);
+  const [selectedDistributor, setSelectedDistributor] = useState<string>(String(defaultDistributor));
 
   const [loadPlans, setLoadPlans] = useState<SubAreaLoadPlan[]>([]);
   const [selectedAreaName, setSelectedAreaName] = useState<string>('');
@@ -75,8 +94,32 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({
   const [showIframePrintModal, setShowIframePrintModal] = useState<boolean>(false);
 
   useEffect(() => {
+    fetchDistributors();
+  }, []);
+
+  const fetchDistributors = async () => {
+    try {
+      const res = await fetch('/api/distributors');
+      if (res.ok) {
+        const dData = await res.json();
+        setDistributors(dData);
+      }
+    } catch (e) {
+      console.error("Failed to load distributors", e);
+    }
+  };
+
+  useEffect(() => {
+    if (!canSwitchDistributor && userDistId) {
+      setSelectedDistributor(userDistId);
+    } else if (distributorId && String(distributorId) !== selectedDistributor) {
+      setSelectedDistributor(String(distributorId));
+    }
+  }, [distributorId, userDistId, canSwitchDistributor]);
+
+  useEffect(() => {
     fetchLoadPlanData();
-  }, [startDate, endDate, activeDistId]);
+  }, [startDate, endDate, selectedDistributor]);
 
   // Auto-print effect when launched with ?print=true (bypasses iframe block in standalone tab)
   useEffect(() => {
@@ -98,8 +141,8 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({
       const queryParams = new URLSearchParams();
       queryParams.set('startDate', startDate);
       queryParams.set('endDate', endDate);
-      if (activeDistId && activeDistId !== 'all') {
-        queryParams.set('distributor_id', String(activeDistId));
+      if (selectedDistributor && selectedDistributor !== 'all') {
+        queryParams.set('distributor_id', String(selectedDistributor));
       }
       const res = await fetch(`/api/reports/daily-load-plan?${queryParams.toString()}`);
       if (!res.ok) {
@@ -109,8 +152,8 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({
       setLoadPlans(data);
       if (data.length > 0) {
         // Support initial sub-area from query parameter
-        const urlParams = new URLSearchParams(window.location.search);
-        const initialSelectedArea = urlParams.get('subArea');
+        const uParams = new URLSearchParams(window.location.search);
+        const initialSelectedArea = uParams.get('subArea');
         const hasMatchedArea = initialSelectedArea && data.some(p => p.subArea === initialSelectedArea);
         setSelectedAreaName(hasMatchedArea ? initialSelectedArea! : data[0].subArea);
       } else {
@@ -124,6 +167,9 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({
     }
   };
 
+  // Active distributor info
+  const activeDistributorInfo = distributors.find(d => String(d.id) === String(selectedDistributor));
+
   // Construct URL for printing with currently active subArea and dates
   const getPrintUrl = () => {
     const params = new URLSearchParams();
@@ -132,8 +178,8 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({
     params.set('subArea', selectedAreaName);
     params.set('startDate', startDate);
     params.set('endDate', endDate);
-    if (activeDistId && activeDistId !== 'all') {
-      params.set('distributor_id', String(activeDistId));
+    if (selectedDistributor && selectedDistributor !== 'all') {
+      params.set('distributor_id', String(selectedDistributor));
     }
     return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
   };
@@ -236,9 +282,18 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({
               <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-md font-mono">
                 Daily Report
               </span>
+              {activeDistributorInfo && (
+                <span className="bg-blue-50 text-blue-700 text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-md font-mono flex items-center gap-1">
+                  <Building2 size={12} />
+                  {activeDistributorInfo.code}
+                </span>
+              )}
             </div>
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight mt-1">Daily Load Plan Report</h2>
-            <p className="text-xs text-slate-500">Physical loading optimization & routed sequence instructions for delivery persons.</p>
+            <p className="text-xs text-slate-500">
+              Physical loading optimization & routed sequence instructions for delivery persons.
+              {activeDistributorInfo ? ` Filtered for ${activeDistributorInfo.name}` : ''}
+            </p>
           </div>
         </div>
 
@@ -276,9 +331,37 @@ export const DailyLoadPlanReport: React.FC<DailyLoadPlanReportProps> = ({
       {/* Filter Section (Hidden during Print) */}
       {!showSchema && (
         <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-4 print:hidden">
-          <div className="flex items-center gap-2 border-b border-slate-50 pb-3">
-            <Calendar size={16} className="text-indigo-600" />
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Report Filter Settings</h3>
+          <div className="flex items-center justify-between border-b border-slate-50 pb-3">
+            <div className="flex items-center gap-2">
+              <Calendar size={16} className="text-indigo-600" />
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Report Filter Settings</h3>
+            </div>
+
+            {/* Distributor Switcher or Locked Badge */}
+            {canSwitchDistributor ? (
+              <div className="flex items-center gap-2">
+                <Building2 size={14} className="text-indigo-600" />
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Distributor:</label>
+                <select
+                  value={selectedDistributor}
+                  onChange={(e) => setSelectedDistributor(e.target.value)}
+                  className="px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 cursor-pointer"
+                  id="filter-distributor-select"
+                >
+                  <option value="all">All Distributors (Consolidated View)</option>
+                  {distributors.map(d => (
+                    <option key={d.id} value={String(d.id)}>
+                      {d.code} - {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : activeDistributorInfo ? (
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-700 text-xs font-bold">
+                <ShieldCheck size={14} className="text-indigo-600" />
+                <span>Distributor: {activeDistributorInfo.code} - {activeDistributorInfo.name}</span>
+              </div>
+            ) : null}
           </div>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 items-end">
