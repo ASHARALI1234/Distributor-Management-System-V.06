@@ -872,7 +872,9 @@ try {
       { tcode: 'PA02', transaction_name: 'Change Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Change', description: 'Modify payment receipt metadata, remarks, or cheque details.' },
       { tcode: 'PA03', transaction_name: 'Display Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Display', description: 'Display and print payment document voucher and invoice settlement details.' },
       { tcode: 'SLR01', transaction_name: 'Shop Ledger Report', module: 'MIS & Analytics', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Itemized customer account statement with invoices, payments, and cumulative running receivable balance.' },
-      { tcode: 'FBL5N', transaction_name: 'Customer Account Ledger (SAP)', module: 'MIS & Analytics', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Display customer line items, invoice settlements, and cumulative balance.' }
+      { tcode: 'FBL5N', transaction_name: 'Customer Account Ledger (SAP)', module: 'MIS & Analytics', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Display customer line items, invoice settlements, and cumulative balance.' },
+      { tcode: 'SAR01', transaction_name: 'Shop Aging Report', module: 'MIS & Analytics', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Accounts receivable aging schedule with slabs: 30, 45, 60, 75, 90, >90 days based on billing date.' },
+      { tcode: 'AG01', transaction_name: 'Customer Receivables Aging Schedule', module: 'MIS & Analytics', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Comprehensive customer aging analysis with billed amount, payments deducted, and net receivable balance.' }
     ];
 
     const insertTCode = db.prepare(`
@@ -905,7 +907,8 @@ try {
           'MM03', 'IN01', 'IN05', 'LOC01', 'UN01', 'VA01', 'VA02', 'VA03',
           'OR01', 'OR05', 'ORD02', 'DLVY', 'DL01', 'DL05', 'VL03', 'LP01',
           'INV01', 'VF03', 'STI01', 'ME21N', 'ME03', 'RT01', 'SRT01', 'PRT01',
-          'LPR01', 'APS01', 'SDR01', 'DASH', 'REPT', 'USR1', 'TC01'
+          'LPR01', 'APS01', 'SDR01', 'DASH', 'REPT', 'USR1', 'TC01',
+          'PA01', 'PA02', 'PA03', 'SLR01', 'FBL5N', 'SAR01', 'AG01'
         ]
       },
       {
@@ -917,7 +920,7 @@ try {
           'VL03', 'LP01', 'INV01', 'VF03', 'STI01', 'RT01', 'SRT01', 'VD01', 'VD02',
           'VD03', 'SHM1', 'SH01', 'SH05', 'SH07', 'SH08', 'BP01', 'OBM1', 'SLM1',
           'SM01', 'SM05', 'SM07', 'SM08', 'DRV1', 'LPR01', 'APS01', 'SDR01', 'DASH', 'REPT', 'TC01',
-          'PA01', 'PA02', 'PA03'
+          'PA01', 'PA02', 'PA03', 'SLR01', 'FBL5N', 'SAR01', 'AG01'
         ]
       },
       {
@@ -953,7 +956,7 @@ try {
         description: 'Finance & Accounts Officer reviewing finalized invoices, tax registers, customer credit summaries, and valuation reports.',
         tcodes: [
           'VF03', 'STI01', 'INV01', 'LPR01', 'APS01', 'SDR01', 'DASH', 'REPT', 'TC01',
-          'PA01', 'PA02', 'PA03'
+          'PA01', 'PA02', 'PA03', 'SLR01', 'FBL5N', 'SAR01', 'AG01'
         ]
       }
     ];
@@ -993,6 +996,122 @@ try {
     }
   } catch (e) {
     console.error("User roles mapping seeding error:", e);
+  }
+
+  // Idempotent seeding for sample aging invoices across slabs (30, 45, 60, 75, 90, >90)
+  try {
+    const recentCount = db.prepare("SELECT count(*) as c FROM invoices WHERE invoice_date >= '2026-01-01'").get() as any;
+    if (!recentCount || recentCount.c < 5) {
+      const now = new Date('2026-08-28T12:00:00.000Z');
+      const getDate = (daysAgo: number) => {
+        const d = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+        return d.toISOString();
+      };
+
+      const sampleInvoices = [
+        { shop_id: 1, days_ago: 10, gross: 45000, paid: 15000, salesman: 'Asif Ali', method: 'CASH' },
+        { shop_id: 2, days_ago: 22, gross: 35000, paid: 10000, salesman: 'Asif Ali', method: 'CHEQUE', bank: 'Meezan Bank', chq: 'CHQ-882101' },
+        { shop_id: 1, days_ago: 38, gross: 40000, paid: 12000, salesman: 'Asif Ali', method: 'CASH' },
+        { shop_id: 4, days_ago: 41, gross: 25000, paid: 5000, salesman: 'Asif Ali', method: 'CASH' },
+        { shop_id: 2, days_ago: 52, gross: 50000, paid: 20000, salesman: 'Asif Ali', method: 'CASH' },
+        { shop_id: 5, days_ago: 55, gross: 30000, paid: 10000, salesman: 'Asif Ali', method: 'CHEQUE', bank: 'Habib Bank Ltd', chq: 'CHQ-554209' },
+        { shop_id: 3, days_ago: 68, gross: 60000, paid: 20000, salesman: 'Asif Ali', method: 'CASH' },
+        { shop_id: 6, days_ago: 71, gross: 28000, paid: 8000, salesman: 'Asif Ali', method: 'CASH' },
+        { shop_id: 1, days_ago: 82, gross: 38000, paid: 15000, salesman: 'Asif Ali', method: 'CASH' },
+        { shop_id: 7, days_ago: 85, gross: 42000, paid: 14000, salesman: 'Asif Ali', method: 'CHEQUE', bank: 'Bank Alfalah', chq: 'CHQ-339012' },
+        { shop_id: 2, days_ago: 115, gross: 55000, paid: 15000, salesman: 'Asif Ali', method: 'CASH' },
+      ];
+
+      for (const item of sampleInvoices) {
+        const invDate = getDate(item.days_ago);
+        const outstanding = item.gross - item.paid;
+        const status = 'posted';
+
+        const invRes = db.prepare(`
+          INSERT INTO invoices (
+            shop_id, invoice_date, gross_amount, total_discount, total_tax, 
+            net_amount, status, distributor_id, paid_amount, outstanding_amount
+          ) VALUES (?, ?, ?, 0, 0, ?, ?, 1, ?, ?)
+        `).run(item.shop_id, invDate, item.gross, item.gross, status, item.paid, outstanding);
+
+        const invoiceId = invRes.lastInsertRowid;
+
+        try {
+          db.prepare(`
+            INSERT INTO invoice_items (invoice_id, delivery_id, delivery_item_id, product_id, quantity, unit_price, net_amount)
+            VALUES (?, 1, 1, 'A000000001', ?, 500, ?)
+          `).run(invoiceId, Math.round(item.gross / 500), item.gross);
+        } catch (itemErr) {}
+
+        if (item.paid > 0) {
+          const paymentDate = getDate(Math.max(1, item.days_ago - 2));
+          const paymentDocNo = 'PAY-AG-' + String(invoiceId).padStart(4, '0');
+          const pmtRes = db.prepare(`
+            INSERT INTO payments (
+              shop_id, amount, payment_date, payment_method, distributor_id, 
+              payment_doc_no, salesman_name, cheque_no, bank_name, 
+              cash_amount, cheque_amount, notes, status
+            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'completed')
+          `).run(
+            item.shop_id,
+            item.paid,
+            paymentDate,
+            item.method,
+            paymentDocNo,
+            item.salesman,
+            item.chq || null,
+            item.bank || null,
+            item.method === 'CASH' ? item.paid : 0,
+            item.method === 'CHEQUE' ? item.paid : 0,
+            'Partial payment allocated against invoice #' + invoiceId
+          );
+
+          const paymentId = pmtRes.lastInsertRowid;
+
+          try {
+            db.prepare(`
+              INSERT INTO payment_invoices (
+                payment_id, invoice_id, invoice_net_amount, allocated_amount, 
+                previous_outstanding, remaining_outstanding
+              ) VALUES (?, ?, ?, ?, ?, ?)
+            `).run(paymentId, invoiceId, item.gross, item.paid, item.gross, outstanding);
+          } catch (piErr) {}
+
+          try {
+            db.prepare(`
+              INSERT INTO client_ledger (shop_id, date, description, debit, credit, balance)
+              VALUES (?, ?, ?, ?, 0, 0)
+            `).run(item.shop_id, invDate, 'Sales Invoice #' + invoiceId + ' (' + item.gross.toLocaleString() + ' PKR)', item.gross);
+
+            db.prepare(`
+              INSERT INTO client_ledger (shop_id, date, description, debit, credit, balance)
+              VALUES (?, ?, ?, 0, ?, 0)
+            `).run(item.shop_id, paymentDate, 'Payment Received ' + paymentDocNo, item.paid);
+          } catch (clErr) {}
+        } else {
+          try {
+            db.prepare(`
+              INSERT INTO client_ledger (shop_id, date, description, debit, credit, balance)
+              VALUES (?, ?, ?, ?, 0, 0)
+            `).run(item.shop_id, invDate, 'Sales Invoice #' + invoiceId + ' (' + item.gross.toLocaleString() + ' PKR)', item.gross);
+          } catch (clErr) {}
+        }
+      }
+
+      const affectedShops = [1, 2, 3, 4, 5, 6, 7];
+      for (const shpId of affectedShops) {
+        try {
+          const rows = db.prepare('SELECT id, debit, credit FROM client_ledger WHERE shop_id = ? ORDER BY date ASC, id ASC').all(shpId) as any[];
+          let running = 0;
+          for (const row of rows) {
+            running += (row.debit || 0) - (row.credit || 0);
+            db.prepare('UPDATE client_ledger SET balance = ? WHERE id = ?').run(running, row.id);
+          }
+        } catch (recompErr) {}
+      }
+    }
+  } catch (seedErr) {
+    console.warn("Aging invoices sample seeding warning:", seedErr);
   }
 } catch (err) {
   console.error("CRITICAL: Database initialization failed:", err);
@@ -6347,6 +6466,459 @@ async function startServer() {
 
     } catch (err: any) {
       console.error("Failed to generate shop ledger report", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /* --------------------------------------------------------------------------
+     SHOP AGING REPORT (SAR01 / AG01)
+     Receivable slabs: 0-30, 31-45, 46-60, 61-75, 76-90, >90 days.
+     Receivable amount calculated after minus of payment amount.
+     Slab determined based on Billing Date (invoice_date) relative to As-Of Date.
+     -------------------------------------------------------------------------- */
+  app.get("/api/reports/shop-aging", (req, res) => {
+    try {
+      const { asOfDate, distributor_id, distributorId, shop_id, shopId, area } = req.query;
+      const targetDistId = distributor_id || distributorId;
+      const targetShopId = shop_id || shopId;
+
+      const asOf = asOfDate ? new Date(String(asOfDate) + 'T23:59:59.999Z') : new Date();
+      const asOfTime = asOf.getTime();
+      const asOfDateStr = asOf.toISOString().split('T')[0];
+
+      let invoiceQuery = `
+        SELECT 
+          i.id as invoice_id,
+          i.shop_id,
+          i.invoice_date,
+          i.gross_amount,
+          i.total_discount,
+          i.total_tax,
+          i.net_amount,
+          i.status,
+          COALESCE(i.paid_amount, 0) as paid_amount,
+          COALESCE(i.outstanding_amount, (i.net_amount - COALESCE(i.paid_amount, 0))) as outstanding_amount,
+          s.shop_name,
+          s.owner_name,
+          s.area,
+          s.subarea,
+          s.location,
+          s.phone,
+          s.credit_limit,
+          s.category,
+          s.distributor_id,
+          d.name as distributor_name,
+          d.code as distributor_code,
+          d.address as distributor_address,
+          d.phone as distributor_phone,
+          d.ntn_number as distributor_ntn,
+          d.strn_number as distributor_strn,
+          d.city as distributor_city
+        FROM invoices i
+        JOIN shops s ON i.shop_id = s.id
+        LEFT JOIN distributors d ON s.distributor_id = d.id
+        WHERE i.status != 'cancelled'
+          AND i.invoice_date <= ?
+      `;
+
+      const params: any[] = [asOf.toISOString()];
+
+      if (targetDistId && targetDistId !== 'all') {
+        invoiceQuery += ` AND (i.distributor_id = ? OR s.distributor_id = ?)`;
+        params.push(targetDistId, targetDistId);
+      }
+
+      if (targetShopId && targetShopId !== 'all') {
+        invoiceQuery += ` AND i.shop_id = ?`;
+        params.push(targetShopId);
+      }
+
+      if (area && area !== 'all') {
+        invoiceQuery += ` AND s.area = ?`;
+        params.push(area);
+      }
+
+      invoiceQuery += ` ORDER BY i.invoice_date ASC, i.id ASC`;
+
+      const invoiceRows = db.prepare(invoiceQuery).all(...params) as any[];
+
+      const invoiceIds = invoiceRows.map(r => r.invoice_id);
+      const paymentAllocationsMap = new Map<number, any[]>();
+
+      if (invoiceIds.length > 0) {
+        try {
+          const allocQuery = `
+            SELECT 
+              pi.invoice_id,
+              pi.payment_id,
+              pi.allocated_amount,
+              p.payment_doc_no,
+              p.payment_date,
+              p.payment_method,
+              p.cheque_no,
+              p.bank_name
+            FROM payment_invoices pi
+            JOIN payments p ON pi.payment_id = p.id
+            WHERE pi.invoice_id IN (${invoiceIds.map(() => '?').join(',')})
+              AND p.payment_date <= ?
+          `;
+          const allocRows = db.prepare(allocQuery).all(...invoiceIds, asOf.toISOString()) as any[];
+          for (const a of allocRows) {
+            if (!paymentAllocationsMap.has(a.invoice_id)) {
+              paymentAllocationsMap.set(a.invoice_id, []);
+            }
+            paymentAllocationsMap.get(a.invoice_id)!.push(a);
+          }
+        } catch (e) {
+          console.warn("Payment allocations query warning for aging report:", e);
+        }
+      }
+
+      let shopsQuery = `
+        SELECT 
+          s.id,
+          s.shop_name,
+          s.owner_name,
+          s.area,
+          s.subarea,
+          s.location,
+          s.phone,
+          s.credit_limit,
+          s.category,
+          s.distributor_id,
+          d.name as distributor_name,
+          d.code as distributor_code,
+          d.address as distributor_address,
+          d.phone as distributor_phone,
+          d.city as distributor_city
+        FROM shops s
+        LEFT JOIN distributors d ON s.distributor_id = d.id
+        WHERE 1=1
+      `;
+      const shopQueryParams: any[] = [];
+      if (targetDistId && targetDistId !== 'all') {
+        shopsQuery += ` AND s.distributor_id = ?`;
+        shopQueryParams.push(targetDistId);
+      }
+      if (targetShopId && targetShopId !== 'all') {
+        shopsQuery += ` AND s.id = ?`;
+        shopQueryParams.push(targetShopId);
+      }
+      if (area && area !== 'all') {
+        shopsQuery += ` AND s.area = ?`;
+        shopQueryParams.push(area);
+      }
+      shopsQuery += ` ORDER BY s.shop_name ASC`;
+      const allShops = db.prepare(shopsQuery).all(...shopQueryParams) as any[];
+
+      interface AgingInvoiceItem {
+        invoice_id: number;
+        invoice_doc_no: string;
+        invoice_date: string;
+        billing_date: string;
+        days_aged: number;
+        slab_key: 'slab_30' | 'slab_45' | 'slab_60' | 'slab_75' | 'slab_90' | 'slab_over_90';
+        slab_label: string;
+        gross_amount: number;
+        net_amount: number;
+        paid_amount: number;
+        receivable_amount: number;
+        status: string;
+        shop_id: number;
+        shop_name: string;
+        area: string;
+        payments: any[];
+      }
+
+      interface ShopAgingSummary {
+        shop_id: number;
+        shop_name: string;
+        owner_name: string;
+        area: string;
+        subarea: string;
+        location: string;
+        phone: string;
+        credit_limit: number;
+        category: string;
+        distributor_id: number;
+        distributor_name: string;
+        distributor_code: string;
+        distributor_address: string;
+        distributor_phone: string;
+        distributor_city: string;
+        total_billed: number;
+        total_paid: number;
+        total_receivable: number;
+        credit_utilization_pct: number;
+        oldest_invoice_date: string | null;
+        oldest_invoice_days: number;
+        risk_level: 'NORMAL' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+        slab_30: number;
+        slab_45: number;
+        slab_60: number;
+        slab_75: number;
+        slab_90: number;
+        slab_over_90: number;
+        invoices: AgingInvoiceItem[];
+      }
+
+      const shopMap = new Map<number, ShopAgingSummary>();
+
+      for (const s of allShops) {
+        shopMap.set(s.id, {
+          shop_id: s.id,
+          shop_name: s.shop_name,
+          owner_name: s.owner_name || '',
+          area: s.area || '',
+          subarea: s.subarea || '',
+          location: s.location || '',
+          phone: s.phone || '',
+          credit_limit: Number(s.credit_limit) || 0,
+          category: s.category || 'Retailer',
+          distributor_id: s.distributor_id,
+          distributor_name: s.distributor_name || 'Al-Rehman Traders',
+          distributor_code: s.distributor_code || 'DIST-01',
+          distributor_address: s.distributor_address || '',
+          distributor_phone: s.distributor_phone || '',
+          distributor_city: s.distributor_city || 'Karachi',
+          total_billed: 0,
+          total_paid: 0,
+          total_receivable: 0,
+          credit_utilization_pct: 0,
+          oldest_invoice_date: null,
+          oldest_invoice_days: 0,
+          risk_level: 'NORMAL',
+          slab_30: 0,
+          slab_45: 0,
+          slab_60: 0,
+          slab_75: 0,
+          slab_90: 0,
+          slab_over_90: 0,
+          invoices: []
+        });
+      }
+
+      const allOpenInvoicesList: AgingInvoiceItem[] = [];
+
+      for (const inv of invoiceRows) {
+        const invNet = Number(inv.net_amount) || 0;
+        const invPaid = Number(inv.paid_amount) || 0;
+        const receivable = Math.max(0, invNet - invPaid);
+
+        if (receivable <= 0.01) continue;
+
+        const invTime = new Date(inv.invoice_date).getTime();
+        const daysAged = Math.max(0, Math.floor((asOfTime - invTime) / (24 * 60 * 60 * 1000)));
+
+        let slab_key: 'slab_30' | 'slab_45' | 'slab_60' | 'slab_75' | 'slab_90' | 'slab_over_90';
+        let slab_label: string;
+
+        if (daysAged <= 30) {
+          slab_key = 'slab_30';
+          slab_label = '0 - 30 Days';
+        } else if (daysAged <= 45) {
+          slab_key = 'slab_45';
+          slab_label = '31 - 45 Days';
+        } else if (daysAged <= 60) {
+          slab_key = 'slab_60';
+          slab_label = '46 - 60 Days';
+        } else if (daysAged <= 75) {
+          slab_key = 'slab_75';
+          slab_label = '61 - 75 Days';
+        } else if (daysAged <= 90) {
+          slab_key = 'slab_90';
+          slab_label = '76 - 90 Days';
+        } else {
+          slab_key = 'slab_over_90';
+          slab_label = '> 90 Days';
+        }
+
+        const invoiceDocNo = `INV-${String(inv.invoice_id).padStart(5, '0')}`;
+        const itemPayments = paymentAllocationsMap.get(inv.invoice_id) || [];
+
+        const agedItem: AgingInvoiceItem = {
+          invoice_id: inv.invoice_id,
+          invoice_doc_no: invoiceDocNo,
+          invoice_date: inv.invoice_date,
+          billing_date: inv.invoice_date.split('T')[0],
+          days_aged: daysAged,
+          slab_key,
+          slab_label,
+          gross_amount: Number(inv.gross_amount) || invNet,
+          net_amount: invNet,
+          paid_amount: invPaid,
+          receivable_amount: receivable,
+          status: inv.status,
+          shop_id: inv.shop_id,
+          shop_name: inv.shop_name,
+          area: inv.area || '',
+          payments: itemPayments
+        };
+
+        allOpenInvoicesList.push(agedItem);
+
+        let shopSummary = shopMap.get(inv.shop_id);
+        if (!shopSummary) {
+          shopSummary = {
+            shop_id: inv.shop_id,
+            shop_name: inv.shop_name,
+            owner_name: inv.owner_name || '',
+            area: inv.area || '',
+            subarea: inv.subarea || '',
+            location: inv.location || '',
+            phone: inv.phone || '',
+            credit_limit: Number(inv.credit_limit) || 0,
+            category: inv.category || 'Retailer',
+            distributor_id: inv.distributor_id,
+            distributor_name: inv.distributor_name || 'Al-Rehman Traders',
+            distributor_code: inv.distributor_code || 'DIST-01',
+            distributor_address: inv.distributor_address || '',
+            distributor_phone: inv.distributor_phone || '',
+            distributor_city: inv.distributor_city || 'Karachi',
+            total_billed: 0,
+            total_paid: 0,
+            total_receivable: 0,
+            credit_utilization_pct: 0,
+            oldest_invoice_date: null,
+            oldest_invoice_days: 0,
+            risk_level: 'NORMAL',
+            slab_30: 0,
+            slab_45: 0,
+            slab_60: 0,
+            slab_75: 0,
+            slab_90: 0,
+            slab_over_90: 0,
+            invoices: []
+          };
+          shopMap.set(inv.shop_id, shopSummary);
+        }
+
+        shopSummary.total_billed += invNet;
+        shopSummary.total_paid += invPaid;
+        shopSummary.total_receivable += receivable;
+        shopSummary[slab_key] += receivable;
+        shopSummary.invoices.push(agedItem);
+
+        if (!shopSummary.oldest_invoice_date || daysAged > shopSummary.oldest_invoice_days) {
+          shopSummary.oldest_invoice_date = inv.invoice_date.split('T')[0];
+          shopSummary.oldest_invoice_days = daysAged;
+        }
+      }
+
+      const shopsResult: ShopAgingSummary[] = [];
+
+      let grandBilled = 0;
+      let grandPaid = 0;
+      let grandReceivable = 0;
+      let grandSlab30 = 0;
+      let grandSlab45 = 0;
+      let grandSlab60 = 0;
+      let grandSlab75 = 0;
+      let grandSlab90 = 0;
+      let grandSlabOver90 = 0;
+      let totalDaysWeighted = 0;
+
+      for (const summary of shopMap.values()) {
+        summary.invoices.sort((a, b) => b.days_aged - a.days_aged);
+
+        if (summary.credit_limit > 0) {
+          summary.credit_utilization_pct = Math.round((summary.total_receivable / summary.credit_limit) * 100);
+        } else {
+          summary.credit_utilization_pct = summary.total_receivable > 0 ? 100 : 0;
+        }
+
+        if (summary.slab_over_90 > 0) {
+          summary.risk_level = 'CRITICAL';
+        } else if (summary.slab_90 > 0 || summary.slab_75 > 0) {
+          summary.risk_level = 'HIGH';
+        } else if (summary.slab_60 > 0 || summary.slab_45 > 0) {
+          summary.risk_level = 'MODERATE';
+        } else {
+          summary.risk_level = 'NORMAL';
+        }
+
+        grandBilled += summary.total_billed;
+        grandPaid += summary.total_paid;
+        grandReceivable += summary.total_receivable;
+        grandSlab30 += summary.slab_30;
+        grandSlab45 += summary.slab_45;
+        grandSlab60 += summary.slab_60;
+        grandSlab75 += summary.slab_75;
+        grandSlab90 += summary.slab_90;
+        grandSlabOver90 += summary.slab_over_90;
+
+        for (const inv of summary.invoices) {
+          totalDaysWeighted += (inv.days_aged * inv.receivable_amount);
+        }
+
+        shopsResult.push(summary);
+      }
+
+      shopsResult.sort((a, b) => b.total_receivable - a.total_receivable);
+      allOpenInvoicesList.sort((a, b) => b.days_aged - a.days_aged);
+
+      const weightedDSO = grandReceivable > 0 ? Math.round(totalDaysWeighted / grandReceivable) : 0;
+
+      const summaryPayload = {
+        asOfDate: asOfDateStr,
+        total_shops_analyzed: shopsResult.length,
+        total_shops_with_balance: shopsResult.filter(s => s.total_receivable > 0).length,
+        total_open_invoices: allOpenInvoicesList.length,
+        total_billed: grandBilled,
+        total_paid: grandPaid,
+        total_receivable: grandReceivable,
+        weighted_dso_days: weightedDSO,
+        critical_overdue_total: grandSlab75 + grandSlab90 + grandSlabOver90,
+        slabs: {
+          slab_30: {
+            amount: grandSlab30,
+            percentage: grandReceivable > 0 ? Math.round((grandSlab30 / grandReceivable) * 1000) / 10 : 0,
+            label: '0 - 30 Days'
+          },
+          slab_45: {
+            amount: grandSlab45,
+            percentage: grandReceivable > 0 ? Math.round((grandSlab45 / grandReceivable) * 1000) / 10 : 0,
+            label: '31 - 45 Days'
+          },
+          slab_60: {
+            amount: grandSlab60,
+            percentage: grandReceivable > 0 ? Math.round((grandSlab60 / grandReceivable) * 1000) / 10 : 0,
+            label: '46 - 60 Days'
+          },
+          slab_75: {
+            amount: grandSlab75,
+            percentage: grandReceivable > 0 ? Math.round((grandSlab75 / grandReceivable) * 1000) / 10 : 0,
+            label: '61 - 75 Days'
+          },
+          slab_90: {
+            amount: grandSlab90,
+            percentage: grandReceivable > 0 ? Math.round((grandSlab90 / grandReceivable) * 1000) / 10 : 0,
+            label: '76 - 90 Days'
+          },
+          slab_over_90: {
+            amount: grandSlabOver90,
+            percentage: grandReceivable > 0 ? Math.round((grandSlabOver90 / grandReceivable) * 1000) / 10 : 0,
+            label: '> 90 Days'
+          }
+        },
+        risk_breakdown: {
+          critical_count: shopsResult.filter(s => s.risk_level === 'CRITICAL' && s.total_receivable > 0).length,
+          high_count: shopsResult.filter(s => s.risk_level === 'HIGH' && s.total_receivable > 0).length,
+          moderate_count: shopsResult.filter(s => s.risk_level === 'MODERATE' && s.total_receivable > 0).length,
+          normal_count: shopsResult.filter(s => s.risk_level === 'NORMAL' && s.total_receivable > 0).length
+        }
+      };
+
+      res.json({
+        success: true,
+        asOfDate: asOfDateStr,
+        summary: summaryPayload,
+        shops: shopsResult,
+        allInvoices: allOpenInvoicesList
+      });
+
+    } catch (err: any) {
+      console.error("Failed to generate shop aging report", err);
       res.status(500).json({ error: err.message });
     }
   });

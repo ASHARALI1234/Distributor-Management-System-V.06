@@ -127,6 +127,7 @@ interface ShopLedgerReportProps {
   onViewInvoice?: (invoiceId: number) => void;
   onViewPayment?: (paymentId: number) => void;
   onCreatePayment?: (shopId: number) => void;
+  onOpenShopAging?: () => void;
 }
 
 export const ShopLedgerReport: React.FC<ShopLedgerReportProps> = ({
@@ -138,7 +139,8 @@ export const ShopLedgerReport: React.FC<ShopLedgerReportProps> = ({
   initialShopId,
   onViewInvoice,
   onViewPayment,
-  onCreatePayment
+  onCreatePayment,
+  onOpenShopAging
 }) => {
   // State
   const [shops, setShops] = useState<Shop[]>([]);
@@ -438,6 +440,17 @@ export const ShopLedgerReport: React.FC<ShopLedgerReportProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {onOpenShopAging && (
+            <button
+              onClick={onOpenShopAging}
+              className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl font-bold text-xs shadow-sm flex items-center gap-1.5 transition"
+              title="Open Accounts Receivable Aging Schedule with 30, 45, 60, 75, 90, >90 day slabs"
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-700" />
+              <span>Aging Schedule (SAR01)</span>
+            </button>
+          )}
+
           {onCreatePayment && currentSelectedShop && (
             <button
               onClick={() => onCreatePayment(currentSelectedShop.id)}
