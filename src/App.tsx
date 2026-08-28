@@ -49,7 +49,8 @@ import {
   Check,
   ArrowLeft,
   Bot,
-  ShieldAlert
+  ShieldAlert,
+  BookOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -126,6 +127,7 @@ import { AreaWiseItemPartySummaryReport } from './components/reports/AreaWiseIte
 import { InvoiceReport } from './components/reports/InvoiceReport';
 import { SalesTaxInvoiceReport } from './components/reports/SalesTaxInvoiceReport';
 import { StockDetailReport } from './components/reports/StockDetailReport';
+import { ShopLedgerReport } from './components/reports/ShopLedgerReport';
 import { AdminTab } from './components/AdminTab';
 import { AIInquiryDesk } from './components/AIInquiryDesk';
 
@@ -554,6 +556,8 @@ export default function App() {
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null);
   const [selectedProductForValuation, setSelectedProductForValuation] = useState<Product | null>(null);
+  const [selectedShopForLedgerId, setSelectedShopForLedgerId] = useState<number | null>(null);
+  const [paymentPreSelectedShopId, setPaymentPreSelectedShopId] = useState<number | null>(null);
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
@@ -602,7 +606,7 @@ export default function App() {
   );
 
   const canAccessReports = isSuperAdmin || hasAnyTCode(
-    'APS01', 'LPR01', 'SDR01', 'REPT', 'VF03', 'STI01', 'MB52', 'MB51', 'FBL5N'
+    'APS01', 'LPR01', 'SDR01', 'REPT', 'VF03', 'STI01', 'MB52', 'MB51', 'FBL5N', 'SLR01'
   );
 
   const canAccessAI = isSuperAdmin || hasAnyTCode('AI01', 'INQ01', 'DASH');
@@ -639,11 +643,12 @@ export default function App() {
 
   // Reports filtered strictly by user authorizations
   const allReportsList = [
+    { title: 'Shop Ledger', desc: 'Itemized customer account statement with invoices, payments, and cumulative running receivable balance.', icon: BookOpen, tcodes: ['SLR01', 'FBL5N', 'REPT'] },
+    { title: 'Stock Detail', desc: 'Detailed itemized transaction log showing opening balance, purchases, sales, and running ledger.', icon: Package, tcodes: ['SDR01', 'MB52'] },
     { title: 'Daily Load Plan', desc: 'Aggregated loading metrics and stop sequencing for delivery dispatch.', icon: Truck, tcodes: ['LPR01', 'LP01'] },
     { title: 'Area Wise Item Party Summary', desc: 'Consolidated sales, products, and booker performance per urban sub-area.', icon: MapPin, tcodes: ['APS01'] },
     { title: 'Invoice', desc: 'Detailed billing statement matching official print-out specifications.', icon: FileText, tcodes: ['VF03', 'INV01'] },
     { title: 'Sales Tax Invoice', desc: 'Detailed billing statement matching official print-out specifications under Section 23 of the Drugs Act 1976.', icon: FileText, tcodes: ['STI01', 'VF03'] },
-    { title: 'Stock Detail', desc: 'Detailed itemized transaction log showing opening balance, purchases, sales, and running ledger.', icon: Package, tcodes: ['SDR01', 'MB52'] },
     { title: 'Sales Summary', desc: 'Daily, weekly and monthly sales analysis', icon: TrendingUp, tcodes: ['REPT'] },
     { title: 'Inventory Valuation', desc: 'Current stock value at PP and TP', icon: Package, tcodes: ['SDR01', 'MB52'] },
     { title: 'Shop Aging', desc: 'Outstanding payments and credit analysis', icon: Clock, tcodes: ['REPT', 'FBL5N'] },
@@ -1197,6 +1202,11 @@ export default function App() {
         setActiveTab('reports');
         setSelectedReportTitle('Stock Detail');
         break;
+      case 'SLR01':
+      case 'FBL5N':
+        setActiveTab('reports');
+        setSelectedReportTitle('Shop Ledger');
+        break;
       case 'RT01':
         setIsReturnModalOpen(true);
         break;
@@ -1390,6 +1400,9 @@ export default function App() {
     } else if (reportCode === 'SDR01') {
       setActiveTab('reports');
       setSelectedReportTitle('Stock Detail');
+    } else if (reportCode === 'SLR01' || reportCode === 'FBL5N') {
+      setActiveTab('reports');
+      setSelectedReportTitle('Shop Ledger');
     } else if (params.get('print') === 'true') {
       setActiveTab('reports');
       setSelectedReportTitle('Area Wise Item Party Summary');
@@ -3296,12 +3309,24 @@ export default function App() {
                                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Credit Limit</span>
                                 <span className="text-sm font-bold text-slate-900">{formatPKR(shop.credit_limit)}</span>
                               </div>
-                              <div className="pt-4 border-t border-slate-50 flex justify-end">
+                              <div className="pt-4 border-t border-slate-50 flex items-center justify-between">
+                                <button 
+                                  onClick={() => {
+                                    setSelectedShopForLedgerId(shop.id);
+                                    setActiveTab('reports');
+                                    setSelectedReportTitle('Shop Ledger');
+                                  }}
+                                  className="flex items-center gap-1 text-slate-500 hover:text-indigo-600 text-xs font-semibold transition-colors"
+                                  title="Open Comprehensive Shop Ledger Statement (SLR01)"
+                                >
+                                  <BookOpen size={14} />
+                                  <span>Statement (SLR01)</span>
+                                </button>
                                 <button 
                                   onClick={() => setSelectedShop(shop)}
                                   className="flex items-center gap-1 text-indigo-600 text-sm font-bold hover:underline"
                                 >
-                                  <span>View Ledger</span>
+                                  <span>Quick Ledger</span>
                                   <ChevronRight size={16} />
                                 </button>
                               </div>
@@ -3788,6 +3813,24 @@ export default function App() {
                     distributorId={currentUser?.distributor_id}
                     isSuperAdmin={isSuperAdmin}
                     currentUser={currentUser}
+                  />
+                ) : selectedReportTitle === 'Shop Ledger' ? (
+                  <ShopLedgerReport 
+                    onBack={() => {
+                      setSelectedReportTitle(null);
+                      setSelectedShopForLedgerId(null);
+                    }} 
+                    formatPKR={formatPKR}
+                    distributorId={currentUser?.distributor_id}
+                    isSuperAdmin={isSuperAdmin}
+                    currentUser={currentUser}
+                    initialShopId={selectedShopForLedgerId || null}
+                    onCreatePayment={(shpId) => {
+                      setPaymentPreSelectedShopId(shpId);
+                      setPaymentModalMode('create');
+                      setEditingPaymentId(null);
+                      setIsPaymentModalOpen(true);
+                    }}
                   />
                 ) : selectedReportTitle ? (
                   <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-6">
@@ -5284,6 +5327,12 @@ export default function App() {
             shop={selectedShop} 
             onClose={() => setSelectedShop(null)} 
             formatPKR={formatPKR}
+            onOpenFullReport={(shopId) => {
+              setSelectedShop(null);
+              setSelectedShopForLedgerId(shopId);
+              setActiveTab('reports');
+              setSelectedReportTitle('Shop Ledger');
+            }}
           />
         )}
         {selectedPurchase && (
@@ -5598,9 +5647,11 @@ export default function App() {
             distributorId={selectedDistributorId}
             formatPKR={formatPKR}
             currentUser={currentUser}
+            initialShopId={paymentPreSelectedShopId}
             onClose={() => {
               setIsPaymentModalOpen(false);
               setEditingPaymentId(null);
+              setPaymentPreSelectedShopId(null);
             }}
             onSuccess={() => {
               fetchPayments();

@@ -82,6 +82,7 @@ interface PaymentModalProps {
   formatPKR: (amt: number) => string;
   currentUser?: any;
   onOpenDisplayPayment?: (paymentId: number | string) => void;
+  initialShopId?: number | null;
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({
@@ -93,7 +94,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   distributorId,
   formatPKR,
   currentUser,
-  onOpenDisplayPayment
+  onOpenDisplayPayment,
+  initialShopId
 }) => {
   // Shops and Salesmen master lists
   const [shops, setShops] = useState<Shop[]>([]);
@@ -101,7 +103,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [loadingInitial, setLoadingInitial] = useState(false);
 
   // Shop selection state
-  const [selectedShopId, setSelectedShopId] = useState<number | null>(null);
+  const [selectedShopId, setSelectedShopId] = useState<number | null>(initialShopId || null);
   const [shopSearch, setShopSearch] = useState('');
   const [showShopDropdown, setShowShopDropdown] = useState(false);
   const [shopLedgerBalance, setShopLedgerBalance] = useState<number>(0);

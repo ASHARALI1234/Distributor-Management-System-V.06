@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trash2, Printer, AlertCircle } from 'lucide-react';
+import { X, Trash2, Printer, AlertCircle, FileText } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Shop, Order, Purchase, LedgerEntry, OrderItem, Delivery, DeliveryItem, Product, InventoryAuditLog } from '../../types';
 
@@ -159,11 +159,13 @@ export const ValuationHistoryModal = ({
 export const LedgerModal = ({ 
   shop, 
   onClose, 
-  formatPKR 
+  formatPKR,
+  onOpenFullReport
 }: { 
   shop: Shop, 
   onClose: () => void, 
-  formatPKR: (amount: number) => string 
+  formatPKR: (amount: number) => string,
+  onOpenFullReport?: (shopId: number) => void
 }) => {
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -208,9 +210,20 @@ export const LedgerModal = ({
             <h3 className="text-lg font-bold text-slate-900">Shop Ledger</h3>
             <p className="text-sm text-slate-500">{shop.shop_name} • Financial History</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-colors shrink-0" title="Close (F3)">
-            <X size={20} className="text-slate-500" />
-          </button>
+          <div className="flex items-center gap-3">
+            {onOpenFullReport && (
+              <button 
+                onClick={() => onOpenFullReport(shop.id)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl transition-all border border-indigo-200"
+              >
+                <FileText size={15} />
+                <span>Open Full Ledger Report (SLR01)</span>
+              </button>
+            )}
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-colors shrink-0" title="Close (F3)">
+              <X size={20} className="text-slate-500" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 p-6 overflow-y-auto">

@@ -870,7 +870,9 @@ try {
       // Payment Management
       { tcode: 'PA01', transaction_name: 'Create Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Create', description: 'Receive customer payments in Cash/Cheque against outstanding invoices and credit shop ledger.' },
       { tcode: 'PA02', transaction_name: 'Change Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Change', description: 'Modify payment receipt metadata, remarks, or cheque details.' },
-      { tcode: 'PA03', transaction_name: 'Display Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Display', description: 'Display and print payment document voucher and invoice settlement details.' }
+      { tcode: 'PA03', transaction_name: 'Display Payment', module: 'Payment Management', parent_module: 'Transactions', action_type: 'Display', description: 'Display and print payment document voucher and invoice settlement details.' },
+      { tcode: 'SLR01', transaction_name: 'Shop Ledger Report', module: 'MIS & Analytics', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Itemized customer account statement with invoices, payments, and cumulative running receivable balance.' },
+      { tcode: 'FBL5N', transaction_name: 'Customer Account Ledger (SAP)', module: 'MIS & Analytics', parent_module: 'MIS - Reports', action_type: 'Report', description: 'Display customer line items, invoice settlements, and cumulative balance.' }
     ];
 
     const insertTCode = db.prepare(`
@@ -6007,6 +6009,344 @@ async function startServer() {
 
     } catch (err: any) {
       console.error("Failed to fetch stock detail report", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/reports/shop-ledger", (req, res) => {
+    try {
+      const { shopId, shop_id, startDate, endDate, distributor_id, distributorId } = req.query;
+      const targetShopId = Number(shopId || shop_id);
+      const targetDistId = distributor_id || distributorId;
+      const distId = targetDistId && targetDistId !== 'all' ? Number(targetDistId) : null;
+
+      if (!targetShopId) {
+        return res.status(400).json({ error: "shopId query parameter is required" });
+      }
+
+      // 1. Get Shop Details with Distributor info
+      const shopWhere = distId 
+        ? `WHERE s.id = ? AND (s.distributor_id = ${distId} OR (s.distributor_id IS NULL AND 1 = ${distId}))` 
+        : `WHERE s.id = ?`;
+
+      const shop = db.prepare(`
+        SELECT 
+          s.*,
+          d.name AS distributor_name,
+          d.code AS distributor_code,
+          d.address AS distributor_address,
+          d.phone AS distributor_phone,
+          d.ntn_number AS distributor_ntn,
+          d.strn_number AS distributor_strn,
+          d.city AS distributor_city
+        FROM shops s
+        LEFT JOIN distributors d ON s.distributor_id = d.id
+        ${shopWhere}
+      `).get(targetShopId) as any;
+
+      if (!shop) {
+        return res.status(404).json({ error: "Shop not found or not accessible under selected distributor" });
+      }
+
+      // 2. Fetch Invoices for this shop
+      const invoices = db.prepare(`
+        SELECT 
+          i.id AS doc_id,
+          '#INV-' || printf('%04d', i.id) AS doc_no,
+          i.invoice_date AS doc_date,
+          'Invoice' AS doc_type,
+          i.status,
+          i.gross_amount,
+          COALESCE(i.total_discount, 0) AS discount_amount,
+          COALESCE(i.total_tax, 0) AS tax_amount,
+          i.net_amount AS debit,
+          0 AS credit,
+          COALESCE(i.paid_amount, 0) AS paid_amount,
+          COALESCE(i.outstanding_amount, i.net_amount - COALESCE(i.paid_amount, 0)) AS outstanding_amount,
+          COALESCE((
+            SELECT sm.name 
+            FROM deliveries d2 
+            JOIN invoice_items ii ON ii.delivery_id = d2.id 
+            LEFT JOIN salesmen sm ON d2.salesman_id = sm.id
+            WHERE ii.invoice_id = i.id 
+            LIMIT 1
+          ), 'Direct Sales') AS salesman_name,
+          COALESCE((
+            SELECT GROUP_CONCAT(DISTINCT '#DEL-' || printf('%04d', ii.delivery_id))
+            FROM invoice_items ii 
+            WHERE ii.invoice_id = i.id AND ii.delivery_id IS NOT NULL
+          ), 'Sales Invoice') AS delivery_refs,
+          (SELECT COUNT(*) FROM invoice_items ii WHERE ii.invoice_id = i.id) AS item_count
+        FROM invoices i
+        WHERE i.shop_id = ? AND i.status != 'cancelled'
+      `).all(targetShopId) as any[];
+
+      // 3. Fetch payment allocations for this shop
+      const paymentInvoicesForShop = db.prepare(`
+        SELECT 
+          pi.invoice_id,
+          pi.payment_id,
+          pi.allocated_amount,
+          COALESCE(p.payment_doc_no, '#PAY-' || printf('%04d', p.id)) AS payment_doc_no,
+          p.payment_date,
+          p.payment_method,
+          p.cheque_no,
+          p.bank_name
+        FROM payment_invoices pi
+        JOIN payments p ON pi.payment_id = p.id
+        WHERE p.shop_id = ? AND p.status != 'cancelled'
+      `).all(targetShopId) as any[];
+
+      const invoicePaymentsMap = new Map<number, any[]>();
+      for (const pi of paymentInvoicesForShop) {
+        if (!invoicePaymentsMap.has(pi.invoice_id)) {
+          invoicePaymentsMap.set(pi.invoice_id, []);
+        }
+        invoicePaymentsMap.get(pi.invoice_id)!.push(pi);
+      }
+
+      const enhancedInvoices = invoices.map(inv => {
+        const applied = invoicePaymentsMap.get(inv.doc_id) || [];
+        const totalAlloc = applied.reduce((sum, p) => sum + (p.allocated_amount || 0), 0);
+        const effPaid = Math.max(inv.paid_amount || 0, totalAlloc);
+        const effOutstanding = Math.max(0, inv.debit - effPaid);
+        let settlementStatus = "Unpaid";
+        if (effOutstanding <= 0 && inv.debit > 0) {
+          settlementStatus = "Fully Settled";
+        } else if (effPaid > 0) {
+          settlementStatus = "Partially Settled";
+        }
+
+        const appliedSummary = applied.length > 0
+          ? applied.map(a => `${a.payment_doc_no} (Rs. ${Number(a.allocated_amount).toLocaleString()})`).join(', ')
+          : 'Pending Payment';
+
+        return {
+          ...inv,
+          paid_amount: effPaid,
+          outstanding_amount: effOutstanding,
+          settlement_status: settlementStatus,
+          payments_applied: applied,
+          applied_summary: appliedSummary,
+          description: `Sales Billing (${inv.delivery_refs || 'Goods Delivery'}) - ${inv.item_count || 1} items`
+        };
+      });
+
+      // 4. Fetch Payments for this shop
+      const payments = db.prepare(`
+        SELECT 
+          p.id AS doc_id,
+          COALESCE(p.payment_doc_no, '#PAY-' || printf('%04d', p.id)) AS doc_no,
+          p.payment_date AS doc_date,
+          'Payment' AS doc_type,
+          p.status,
+          0 AS gross_amount,
+          0 AS discount_amount,
+          0 AS tax_amount,
+          0 AS debit,
+          p.amount AS credit,
+          p.amount AS paid_amount,
+          0 AS outstanding_amount,
+          p.payment_method,
+          p.cheque_no,
+          p.cheque_date,
+          p.bank_name,
+          p.bank_branch,
+          p.cash_amount,
+          p.cheque_amount,
+          p.notes,
+          COALESCE(p.salesman_name, 'Direct Cashier') AS salesman_name
+        FROM payments p
+        WHERE p.shop_id = ? AND p.status != 'cancelled'
+      `).all(targetShopId) as any[];
+
+      const paymentInvoicesMap = new Map<number, any[]>();
+      for (const pi of paymentInvoicesForShop) {
+        if (!paymentInvoicesMap.has(pi.payment_id)) {
+          paymentInvoicesMap.set(pi.payment_id, []);
+        }
+        paymentInvoicesMap.get(pi.payment_id)!.push(pi);
+      }
+
+      const enhancedPayments = payments.map(pmt => {
+        const settled = paymentInvoicesMap.get(pmt.doc_id) || [];
+        const settledSummary = settled.length > 0 
+          ? settled.map(s => `#INV-${String(s.invoice_id).padStart(4, "0")} (Rs. ${Number(s.allocated_amount).toLocaleString()})`).join(", ")
+          : "On Account / General Receipt";
+        const methodDesc = pmt.payment_method === "CASH" 
+          ? "Cash Collection" 
+          : `Cheque #${pmt.cheque_no || ""} (${pmt.bank_name || "Bank"})`;
+
+        return {
+          ...pmt,
+          invoices_settled: settled,
+          settled_summary: settledSummary,
+          description: `Payment Receipt: ${methodDesc}${pmt.notes ? ` - ${pmt.notes}` : ''}`
+        };
+      });
+
+      // 5. Fetch Sales Returns for this shop (if any)
+      const salesReturns = db.prepare(`
+        SELECT 
+          sr.id AS doc_id,
+          '#RET-' || printf('%04d', sr.id) AS doc_no,
+          sr.return_date AS doc_date,
+          'Sales Return' AS doc_type,
+          sr.status,
+          sr.total_amount AS gross_amount,
+          0 AS discount_amount,
+          0 AS tax_amount,
+          0 AS debit,
+          sr.total_amount AS credit,
+          sr.total_amount AS paid_amount,
+          0 AS outstanding_amount,
+          CASE 
+            WHEN sr.invoice_id IS NOT NULL THEN 'Sales Return against #INV-' || printf('%04d', sr.invoice_id)
+            ELSE 'Customer Sales Return / Credit Note'
+          END AS notes,
+          'Returns Desk' AS salesman_name
+        FROM sales_returns sr
+        WHERE sr.shop_id = ? AND sr.status != 'cancelled'
+      `).all(targetShopId) as any[];
+
+      const enhancedReturns = salesReturns.map(ret => ({
+        ...ret,
+        description: `Sales Return Credit: ${ret.notes}`
+      }));
+
+      // 6. Check for unbilled deliveries from client_ledger
+      let unbilledDeliveries: any[] = [];
+      if (invoices.length === 0) {
+        const rawLedgerDeliveries = db.prepare(`
+          SELECT 
+            cl.id AS doc_id,
+            '#DEL-' || printf('%04d', cl.id) AS doc_no,
+            cl.date AS doc_date,
+            'Delivery' AS doc_type,
+            'completed' AS status,
+            cl.debit AS gross_amount,
+            0 AS discount_amount,
+            0 AS tax_amount,
+            cl.debit AS debit,
+            cl.credit AS credit,
+            0 AS paid_amount,
+            cl.debit AS outstanding_amount,
+            cl.description,
+            'Delivery Team' AS salesman_name
+          FROM client_ledger cl
+          WHERE cl.shop_id = ?
+            AND cl.description NOT LIKE '%Invoice%'
+            AND cl.description NOT LIKE '%Payment%'
+            AND cl.description NOT LIKE '%Initial Invoices Balance%'
+        `).all(targetShopId) as any[];
+        unbilledDeliveries = rawLedgerDeliveries;
+      }
+
+      // Combine all movements
+      const allTransactions = [
+        ...enhancedInvoices,
+        ...enhancedPayments,
+        ...enhancedReturns,
+        ...unbilledDeliveries
+      ];
+
+      // Helpers
+      const toDateStr = (dateStr: string) => {
+        if (!dateStr) return '';
+        return dateStr.replace('T', ' ').split(' ')[0];
+      };
+
+      const parseDateTime = (str: string) => {
+        if (!str) return 0;
+        const normalized = str.replace('T', ' ').replace(/\..+$/, '').replace('Z', '');
+        const parts = normalized.split(' ');
+        const dateParts = parts[0].split('-');
+        const year = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1;
+        const day = parseInt(dateParts[2], 10);
+        
+        if (parts.length > 1 && parts[1]) {
+          const timeParts = parts[1].split(':');
+          const hours = parseInt(timeParts[0] || '0', 10);
+          const minutes = parseInt(timeParts[1] || '0', 10);
+          const seconds = parseInt(timeParts[2] || '0', 10);
+          return new Date(year, month, day, hours, minutes, seconds).getTime();
+        }
+        return new Date(year, month, day, 0, 0, 0).getTime();
+      };
+
+      // Type priority: Invoices (Debit) first on same timestamp, then returns, then payments
+      const typePriority: Record<string, number> = {
+        'Delivery': 1,
+        'Invoice': 2,
+        'Sales Return': 3,
+        'Payment': 4
+      };
+
+      allTransactions.sort((a, b) => {
+        const timeA = parseDateTime(a.doc_date);
+        const timeB = parseDateTime(b.doc_date);
+        if (timeA !== timeB) return timeA - timeB;
+        const pA = typePriority[a.doc_type] || 9;
+        const pB = typePriority[b.doc_type] || 9;
+        if (pA !== pB) return pA - pB;
+        return a.doc_id - b.doc_id;
+      });
+
+      const sDate = startDate ? (startDate as string) : '2021-01-01';
+      const eDate = endDate ? (endDate as string) : new Date().toISOString().split('T')[0];
+
+      // Calculate opening balance before sDate
+      let openingBalance = 0;
+      const ledgerItems: any[] = [];
+
+      for (const item of allTransactions) {
+        const itemDateStr = toDateStr(item.doc_date);
+        const netMovement = (item.debit || 0) - (item.credit || 0);
+
+        if (itemDateStr < sDate) {
+          openingBalance += netMovement;
+        } else if (itemDateStr >= sDate && itemDateStr <= eDate) {
+          ledgerItems.push(item);
+        }
+      }
+
+      // Compute running auto balance for in-range transactions
+      let runningBalance = openingBalance;
+      const finalLedger = ledgerItems.map(item => {
+        const netMovement = (item.debit || 0) - (item.credit || 0);
+        runningBalance += netMovement;
+        return {
+          ...item,
+          auto_balance: runningBalance
+        };
+      });
+
+      const totalDebit = ledgerItems.reduce((sum, it) => sum + (it.debit || 0), 0);
+      const totalCredit = ledgerItems.reduce((sum, it) => sum + (it.credit || 0), 0);
+      const netChange = totalDebit - totalCredit;
+      const closingBalance = runningBalance;
+
+      // All-time outstanding receivable balance
+      const allTimeBalance = allTransactions.reduce((sum, it) => sum + ((it.debit || 0) - (it.credit || 0)), 0);
+
+      res.json({
+        shop,
+        startDate: sDate,
+        endDate: eDate,
+        openingBalance,
+        closingBalance,
+        totalDebit,
+        totalCredit,
+        netChange,
+        allTimeBalance,
+        ledger: finalLedger,
+        invoicesSummary: enhancedInvoices,
+        paymentsSummary: enhancedPayments
+      });
+
+    } catch (err: any) {
+      console.error("Failed to generate shop ledger report", err);
       res.status(500).json({ error: err.message });
     }
   });
