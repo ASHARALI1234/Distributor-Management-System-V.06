@@ -75,6 +75,7 @@ try {
         material_group_id TEXT,
         purchase_price REAL NOT NULL,
         trade_price REAL NOT NULL,
+        profit_margin_percent REAL DEFAULT 0,
         retail_price REAL NOT NULL,
         stock_quantity INTEGER NOT NULL,
         unit TEXT DEFAULT 'EACH',
@@ -566,6 +567,16 @@ try {
   // Moving Average Price (MAP) & Inventory Valuation Migrations
   try { db.exec("ALTER TABLE products ADD COLUMN inventory_value REAL DEFAULT 0"); } catch(e) {}
   try { db.exec("ALTER TABLE products ADD COLUMN moving_average_price REAL DEFAULT 0"); } catch(e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN profit_margin_percent REAL DEFAULT 0"); } catch(e) {}
+  try {
+    db.exec(`
+      UPDATE products 
+      SET profit_margin_percent = ROUND(((retail_price - trade_price) * 100.0) / trade_price, 2)
+      WHERE (profit_margin_percent IS NULL OR profit_margin_percent = 0)
+        AND trade_price > 0 
+        AND retail_price >= trade_price
+    `);
+  } catch(e) {}
 
   try {
     db.exec(`
@@ -3264,17 +3275,35 @@ async function startServer() {
   }
 
   app.post("/api/products", (req, res) => {
-    const { product_name, brand, material_group_id, purchase_price, trade_price, retail_price, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, distributor_id } = req.body;
+    const { product_name, brand, material_group_id, purchase_price, trade_price, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, distributor_id } = req.body;
+    let { retail_price, profit_margin_percent } = req.body;
+    
     const opening_stock = req.body.opening_stock !== undefined ? Number(req.body.opening_stock) : Number(req.body.stock_quantity || 0);
     const pPrice = Number(purchase_price) || 0;
+    const tPrice = Number(trade_price) || 0;
+    
+    let margin = profit_margin_percent !== undefined && profit_margin_percent !== null && profit_margin_percent !== '' ? Number(profit_margin_percent) : null;
+    let rPrice = retail_price !== undefined && retail_price !== null && retail_price !== '' ? Number(retail_price) : null;
+
+    if (margin !== null && !isNaN(margin)) {
+      if (rPrice === null || isNaN(rPrice) || rPrice === 0) {
+        rPrice = round2(tPrice * (1.0 + (margin / 100.0)));
+      }
+    } else if (rPrice !== null && !isNaN(rPrice) && tPrice > 0) {
+      margin = round2(((rPrice - tPrice) * 100.0) / tPrice);
+    } else {
+      margin = 0;
+      rPrice = rPrice || tPrice;
+    }
+
     const initialMap = pPrice;
     const initialVal = round2(opening_stock * pPrice);
     const product_id = generateProductId();
     const distId = distributor_id ? Number(distributor_id) : 1;
     
     const transaction = db.transaction(() => {
-      db.prepare("INSERT INTO products (product_id, product_name, brand, material_group_id, purchase_price, trade_price, retail_price, stock_quantity, inventory_value, moving_average_price, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, distributor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-        product_id, product_name, brand, material_group_id, pPrice, trade_price, retail_price, opening_stock, initialVal, initialMap, unit || 'EACH', conversion_value || 1, conversion_unit || 'EACH', min_stock_level || 10, reorder_level || 20, distId
+      db.prepare("INSERT INTO products (product_id, product_name, brand, material_group_id, purchase_price, trade_price, profit_margin_percent, retail_price, stock_quantity, inventory_value, moving_average_price, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, distributor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+        product_id, product_name, brand, material_group_id, pPrice, tPrice, margin || 0, rPrice || 0, opening_stock, initialVal, initialMap, unit || 'EACH', conversion_value || 1, conversion_unit || 'EACH', min_stock_level || 10, reorder_level || 20, distId
       );
 
       if (opening_stock > 0) {
@@ -3301,7 +3330,23 @@ async function startServer() {
 
   app.put("/api/products/:id", (req, res) => {
     const { id } = req.params;
-    const { product_name, brand, material_group_id, purchase_price, trade_price, retail_price, unit, conversion_value, conversion_unit, min_stock_level, reorder_level } = req.body;
+    const { product_name, brand, material_group_id, purchase_price, trade_price, unit, conversion_value, conversion_unit, min_stock_level, reorder_level } = req.body;
+    let { retail_price, profit_margin_percent } = req.body;
+
+    const tPrice = Number(trade_price) || 0;
+    let margin = profit_margin_percent !== undefined && profit_margin_percent !== null && profit_margin_percent !== '' ? Number(profit_margin_percent) : null;
+    let rPrice = retail_price !== undefined && retail_price !== null && retail_price !== '' ? Number(retail_price) : null;
+
+    if (margin !== null && !isNaN(margin)) {
+      if (rPrice === null || isNaN(rPrice) || rPrice === 0) {
+        rPrice = round2(tPrice * (1.0 + (margin / 100.0)));
+      }
+    } else if (rPrice !== null && !isNaN(rPrice) && tPrice > 0) {
+      margin = round2(((rPrice - tPrice) * 100.0) / tPrice);
+    } else {
+      margin = 0;
+      rPrice = rPrice || tPrice;
+    }
     
     const newOpeningStock = req.body.opening_stock !== undefined ? Number(req.body.opening_stock) : null;
     
@@ -3343,8 +3388,8 @@ async function startServer() {
         }
       }
 
-      db.prepare("UPDATE products SET product_name = ?, brand = ?, material_group_id = ?, purchase_price = ?, trade_price = ?, retail_price = ?, stock_quantity = ?, unit = ?, conversion_value = ?, conversion_unit = ?, min_stock_level = ?, reorder_level = ? WHERE product_id = ?").run(
-        product_name, brand, material_group_id, purchase_price, trade_price, retail_price, updatedStockQuantity, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, id
+      db.prepare("UPDATE products SET product_name = ?, brand = ?, material_group_id = ?, purchase_price = ?, trade_price = ?, profit_margin_percent = ?, retail_price = ?, stock_quantity = ?, unit = ?, conversion_value = ?, conversion_unit = ?, min_stock_level = ?, reorder_level = ? WHERE product_id = ?").run(
+        product_name, brand, material_group_id, purchase_price, tPrice, margin || 0, rPrice || 0, updatedStockQuantity, unit, conversion_value, conversion_unit, min_stock_level, reorder_level, id
       );
     });
 
@@ -3354,6 +3399,110 @@ async function startServer() {
     } catch (err) {
       console.error("Failed to update product", err);
       res.status(500).json({ error: "Failed to update product" });
+    }
+  });
+
+  // Automated Batch Profit Margin & Retail Price Process
+  app.post("/api/products/batch-update-margin", (req, res) => {
+    try {
+      const { material_group_id, product_id, profit_margin_percent, distributor_id, preview_only } = req.body;
+      const margin = Number(profit_margin_percent);
+      if (isNaN(margin)) {
+        return res.status(400).json({ error: "Please enter a valid profit margin percentage." });
+      }
+
+      let query = `
+        SELECT p.*, mg.mat_description as material_group_name
+        FROM products p
+        LEFT JOIN material_groups mg ON p.material_group_id = mg.mat_gp
+        WHERE 1=1
+      `;
+      const params: any[] = [];
+
+      if (distributor_id && distributor_id !== 'all') {
+        query += ` AND (p.distributor_id = ? OR p.distributor_id IS NULL)`;
+        params.push(Number(distributor_id));
+      }
+
+      if (material_group_id && material_group_id !== 'all' && material_group_id !== '') {
+        query += ` AND p.material_group_id = ?`;
+        params.push(material_group_id);
+      }
+
+      if (product_id && product_id !== 'all' && product_id !== '') {
+        if (Array.isArray(product_id)) {
+          const placeholders = product_id.map(() => '?').join(',');
+          query += ` AND p.product_id IN (${placeholders})`;
+          params.push(...product_id);
+        } else {
+          query += ` AND p.product_id = ?`;
+          params.push(product_id);
+        }
+      }
+
+      query += ` ORDER BY p.material_group_id ASC, p.product_name ASC`;
+
+      const matchingProducts = db.prepare(query).all(...params) as any[];
+
+      const previewList = matchingProducts.map(prod => {
+        const currentTp = Number(prod.trade_price) || 0;
+        const currentRp = Number(prod.retail_price) || 0;
+        const currentMargin = Number(prod.profit_margin_percent) || (currentTp > 0 ? round2(((currentRp - currentTp) * 100.0) / currentTp) : 0);
+        // Formula: Retail Price = Trade Price * (1 + Margin / 100)
+        const newRp = round2(currentTp * (1.0 + (margin / 100.0)));
+        const diff = round2(newRp - currentRp);
+        return {
+          product_id: prod.product_id,
+          product_name: prod.product_name,
+          brand: prod.brand,
+          material_group_id: prod.material_group_id,
+          material_group_name: prod.material_group_name || prod.material_group_id,
+          current_trade_price: currentTp,
+          current_retail_price: currentRp,
+          current_margin_percent: currentMargin,
+          new_margin_percent: margin,
+          new_retail_price: newRp,
+          price_difference: diff
+        };
+      });
+
+      if (preview_only) {
+        return res.json({
+          success: true,
+          count: previewList.length,
+          preview: previewList
+        });
+      }
+
+      if (previewList.length === 0) {
+        return res.status(404).json({ error: "No matching products found for the specified Material Group and Product Code criteria." });
+      }
+
+      // Execute update in a transaction
+      const updateStmt = db.prepare(`
+        UPDATE products 
+        SET profit_margin_percent = ?,
+            retail_price = ROUND(trade_price * (1.0 + (? / 100.0)), 2)
+        WHERE product_id = ?
+      `);
+
+      const updateTx = db.transaction(() => {
+        for (const item of previewList) {
+          updateStmt.run(margin, margin, item.product_id);
+        }
+      });
+
+      updateTx();
+
+      res.json({
+        success: true,
+        message: `Successfully updated profit margin to ${margin}% and recalculated retail price for ${previewList.length} products.`,
+        updated_count: previewList.length,
+        items: previewList
+      });
+    } catch (err: any) {
+      console.error("Failed to batch update margins:", err);
+      res.status(500).json({ error: err.message || "Failed to update profit margins" });
     }
   });
 

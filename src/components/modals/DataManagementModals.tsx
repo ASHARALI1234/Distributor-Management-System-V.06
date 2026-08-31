@@ -1757,9 +1757,10 @@ export const ProductMasterDataModal = ({
         brand: '',
         unit: '',
         conversion_value: 1,
-        trade_price: 0,
-        retail_price: 0,
         purchase_price: 0,
+        trade_price: 0,
+        profit_margin_percent: 0,
+        retail_price: 0,
         stock_quantity: 0,
         opening_stock: 0,
         min_stock_level: 0,
@@ -1768,6 +1769,47 @@ export const ProductMasterDataModal = ({
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
+
+    const handleTradePriceChange = (tp: number) => {
+        const margin = formData.profit_margin_percent || 0;
+        let newRp = formData.retail_price;
+        if (margin > 0) {
+            newRp = Math.round(tp * (1 + margin / 100) * 100) / 100;
+        } else if (formData.retail_price > 0 && tp > 0) {
+            const calculatedMargin = Math.round(((formData.retail_price - tp) / tp) * 10000) / 100;
+            setFormData(prev => ({
+                ...prev,
+                trade_price: tp,
+                profit_margin_percent: calculatedMargin
+            }));
+            return;
+        }
+        setFormData(prev => ({
+            ...prev,
+            trade_price: tp,
+            retail_price: newRp
+        }));
+    };
+
+    const handleMarginChange = (margin: number) => {
+        const tp = formData.trade_price || 0;
+        const newRp = Math.round(tp * (1 + margin / 100) * 100) / 100;
+        setFormData(prev => ({
+            ...prev,
+            profit_margin_percent: margin,
+            retail_price: newRp
+        }));
+    };
+
+    const handleRetailPriceChange = (rp: number) => {
+        const tp = formData.trade_price || 0;
+        const newMargin = tp > 0 ? Math.round(((rp - tp) / tp) * 10000) / 100 : 0;
+        setFormData(prev => ({
+            ...prev,
+            retail_price: rp,
+            profit_margin_percent: newMargin
+        }));
+    };
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -1810,9 +1852,10 @@ export const ProductMasterDataModal = ({
                     brand: '',
                     unit: '',
                     conversion_value: 1,
-                    trade_price: 0,
-                    retail_price: 0,
                     purchase_price: 0,
+                    trade_price: 0,
+                    profit_margin_percent: 0,
+                    retail_price: 0,
                     stock_quantity: 0,
                     opening_stock: 0,
                     min_stock_level: 0,
@@ -1928,19 +1971,52 @@ export const ProductMasterDataModal = ({
                                     <input 
                                         required
                                         type="number" 
+                                        step="0.01"
                                         className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none"
-                                        value={formData.trade_price}
-                                        onChange={e => setFormData({...formData, trade_price: parseFloat(e.target.value)})}
+                                        value={formData.trade_price || ''}
+                                        onChange={e => handleTradePriceChange(parseFloat(e.target.value) || 0)}
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">RP (Retail Price)</label>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="block text-[10px] font-bold text-indigo-600 uppercase">Profit Margin %</label>
+                                        <div className="flex items-center gap-1">
+                                            {[10, 12, 15, 20].map(pct => (
+                                                <button
+                                                    key={pct}
+                                                    type="button"
+                                                    onClick={() => handleMarginChange(pct)}
+                                                    className="px-1.5 py-0.5 text-[9px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded transition-colors"
+                                                >
+                                                    {pct}%
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="relative">
+                                        <input 
+                                            type="number" 
+                                            step="0.01"
+                                            placeholder="e.g. 12"
+                                            className="w-full pl-4 pr-8 py-2 bg-indigo-50/50 border border-indigo-200 rounded-xl text-sm font-semibold text-indigo-900 focus:border-indigo-600 outline-none"
+                                            value={formData.profit_margin_percent !== undefined && formData.profit_margin_percent !== null ? formData.profit_margin_percent : ''}
+                                            onChange={e => handleMarginChange(parseFloat(e.target.value) || 0)}
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-indigo-400">%</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase">RP (Retail Price)</label>
+                                        <span className="text-[9px] text-slate-400 font-medium">TP + Margin</span>
+                                    </div>
                                     <input 
                                         required
                                         type="number" 
+                                        step="0.01"
                                         className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-600 outline-none"
-                                        value={formData.retail_price}
-                                        onChange={e => setFormData({...formData, retail_price: parseFloat(e.target.value)})}
+                                        value={formData.retail_price || ''}
+                                        onChange={e => handleRetailPriceChange(parseFloat(e.target.value) || 0)}
                                     />
                                 </div>
                                 {editingId ? (
@@ -2054,58 +2130,74 @@ export const ProductMasterDataModal = ({
                                     <tr className="bg-slate-50 border-b border-slate-200">
                                         <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Product Details</th>
                                         <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase">Brand/Group</th>
-                                        <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-right">TP / RP</th>
+                                        <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-right">Pricing (TP / Margin / RP)</th>
                                         <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-right">Stock</th>
                                         <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-sm">
-                                    {filteredProducts.map(p => (
-                                        <tr key={p.product_id} className="hover:bg-slate-50 transition-colors group">
-                                            <td className="px-4 py-3">
-                                                <p className="font-bold text-slate-900 leading-tight">{p.product_name}</p>
-                                                <p className="text-[10px] text-slate-400 font-mono mt-0.5">{p.product_id}</p>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <p className="text-slate-600 font-medium">{p.brand}</p>
-                                                <p className="text-[10px] text-slate-400">{materialGroups.find(g => g.mat_gp === p.material_group_id)?.mat_description || p.material_group_id}</p>
-                                            </td>
-                                            <td className="px-4 py-3 text-right tabular-nums">
-                                                <p className="text-indigo-600 font-bold">{p.trade_price}</p>
-                                                <p className="text-[10px] text-slate-400">{p.retail_price}</p>
-                                            </td>
-                                            <td className="px-4 py-3 text-right tabular-nums">
-                                                <span className={cn(
-                                                    "px-2 py-0.5 rounded text-[10px] font-bold",
-                                                    p.stock_quantity <= 0 ? "bg-rose-100 text-rose-600" : "bg-emerald-100 text-emerald-600"
-                                                )}>
-                                                    {p.stock_quantity} {p.unit}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 text-right">
-                                                <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button 
-                                                        onClick={() => {
-                                                            setEditingId(p.product_id);
-                                                            setFormData({
-                                                                ...p,
-                                                                opening_stock: p.opening_stock || 0
-                                                            });
-                                                        }}
-                                                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                                    >
-                                                        <Edit size={14} />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => handleDelete(p.product_id)}
-                                                        className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {filteredProducts.map(p => {
+                                        const currentMargin = p.profit_margin_percent !== undefined && p.profit_margin_percent !== null 
+                                            ? p.profit_margin_percent 
+                                            : (p.trade_price > 0 ? Math.round(((p.retail_price - p.trade_price) / p.trade_price) * 10000) / 100 : 0);
+
+                                        return (
+                                            <tr key={p.product_id} className="hover:bg-slate-50 transition-colors group">
+                                                <td className="px-4 py-3">
+                                                    <p className="font-bold text-slate-900 leading-tight">{p.product_name}</p>
+                                                    <p className="text-[10px] text-slate-400 font-mono mt-0.5">{p.product_id}</p>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <p className="text-slate-600 font-medium">{p.brand}</p>
+                                                    <p className="text-[10px] text-slate-400">{materialGroups.find(g => g.mat_gp === p.material_group_id)?.mat_description || p.material_group_id}</p>
+                                                </td>
+                                                <td className="px-4 py-3 text-right tabular-nums">
+                                                    <div className="flex flex-col items-end">
+                                                        <div className="flex items-center gap-1.5 justify-end">
+                                                            <span className="text-xs font-semibold text-slate-600">TP {p.trade_price}</span>
+                                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-100">
+                                                                +{currentMargin}%
+                                                            </span>
+                                                        </div>
+                                                        <span className="text-xs font-bold text-indigo-700">RP {p.retail_price}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-right tabular-nums">
+                                                    <span className={cn(
+                                                        "px-2 py-0.5 rounded text-[10px] font-bold",
+                                                        p.stock_quantity <= 0 ? "bg-rose-100 text-rose-600" : "bg-emerald-100 text-emerald-600"
+                                                    )}>
+                                                        {p.stock_quantity} {p.unit}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-right">
+                                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button 
+                                                            onClick={() => {
+                                                                setEditingId(p.product_id);
+                                                                setFormData({
+                                                                    ...p,
+                                                                    profit_margin_percent: currentMargin,
+                                                                    opening_stock: p.opening_stock || 0
+                                                                });
+                                                            }}
+                                                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                                            title="Edit SKU"
+                                                        >
+                                                            <Edit size={14} />
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => handleDelete(p.product_id)}
+                                                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                                            title="Delete SKU"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                     {products.length === 0 && (
                                         <tr>
                                             <td colSpan={5} className="px-4 py-12 text-center text-slate-400">

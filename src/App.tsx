@@ -50,7 +50,8 @@ import {
   ArrowLeft,
   Bot,
   ShieldAlert,
-  BookOpen
+  BookOpen,
+  Percent
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -122,6 +123,7 @@ import { DriverModal, SalesmanModal, OrderBookerModal, MaterialGroupModal, TCode
 import { PurchaseModal, NewOrderModal } from './components/modals/TransactionModals';
 import { DeliveryModal } from './components/modals/LogisticsModals';
 import { RegisterShopModal, ShopMasterModal, RegisterSupplierModal, SupplierMasterModal, ProductMasterDataModal, UnitModal } from './components/modals/DataManagementModals';
+import { ProductMarginProcessModal } from './components/modals/ProductMarginProcessModal';
 import { DailyLoadPlanReport } from './components/reports/DailyLoadPlanReport';
 import { AreaWiseItemPartySummaryReport } from './components/reports/AreaWiseItemPartySummaryReport';
 import { InvoiceReport } from './components/reports/InvoiceReport';
@@ -691,6 +693,8 @@ export default function App() {
   const [isDistributorMasterModalOpen, setIsDistributorMasterModalOpen] = useState(false);
 
   const [isProductMasterModalOpen, setIsProductMasterModalOpen] = useState(false);
+  const [isMarginProcessModalOpen, setIsMarginProcessModalOpen] = useState(false);
+  const [marginProcessParams, setMarginProcessParams] = useState<{ material_group_id?: string; product_id?: string }>({ material_group_id: 'all', product_id: 'all' });
   const [isRegisterShopModalOpen, setIsRegisterShopModalOpen] = useState(false);
   const [isRegisterSupplierModalOpen, setIsRegisterSupplierModalOpen] = useState(false);
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
@@ -1233,6 +1237,12 @@ export default function App() {
       case 'PR02':
       case 'PR03':
         setIsProductMasterModalOpen(true); 
+        break;
+      case 'PRM01':
+      case 'MR01':
+      case 'VK11':
+        setMarginProcessParams({ material_group_id: 'all', product_id: 'all' });
+        setIsMarginProcessModalOpen(true);
         break;
       case 'MM03': 
       case 'IN01':
@@ -3622,20 +3632,31 @@ export default function App() {
                           </AnimatePresence>
                         </div>
 
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <button 
                             onClick={() => setIsMaterialGroupModalOpen(true)}
                             className="bg-white text-slate-600 border border-slate-200 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-slate-50 transition-colors"
                           >
                             <Package size={18} />
-                            <span>Groups</span>
+                            <span>Groups (MM01)</span>
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setMarginProcessParams({ material_group_id: 'all', product_id: 'all' });
+                              setIsMarginProcessModalOpen(true);
+                            }}
+                            className="bg-indigo-50 border border-indigo-200 text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-100 transition-colors shadow-sm"
+                            title="Automatic Profit Margin & Retail Price Process (PRM01)"
+                          >
+                            <Percent size={18} className="text-indigo-600" />
+                            <span>Margin & RP Process (PRM01)</span>
                           </button>
                           <button 
                             onClick={() => setIsProductMasterModalOpen(true)}
                             className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-100"
                           >
                             <Settings size={18} />
-                            <span>Product Master Data</span>
+                            <span>Product Master (MM02)</span>
                           </button>
                         </div>
                       </div>
@@ -3675,7 +3696,7 @@ export default function App() {
                               <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">ID</th>
                               <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Product Name</th>
                               <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Group</th>
-                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">PP / TP / RP</th>
+                              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Pricing (PP / TP / RP / Margin)</th>
                               <th className="px-6 py-4 text-xs font-bold text-indigo-600 uppercase tracking-wider">Valuation (MAP)</th>
                               <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Stock</th>
                               <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Action</th>
@@ -3685,6 +3706,10 @@ export default function App() {
                             {filteredProducts.map(product => {
                               const mapVal = product.moving_average_price || product.purchase_price;
                               const invVal = product.inventory_value || (product.stock_quantity * mapVal);
+                              const currentMargin = product.profit_margin_percent !== undefined && product.profit_margin_percent !== null
+                                ? product.profit_margin_percent
+                                : (product.trade_price > 0 ? Math.round(((product.retail_price - product.trade_price) / product.trade_price) * 10000) / 100 : 0);
+
                               return (
                                 <tr key={product.product_id} className="hover:bg-slate-50 transition-colors">
                                   <td className="px-6 py-4 font-mono text-xs text-slate-500">{product.product_id}</td>
@@ -3698,9 +3723,15 @@ export default function App() {
                                     </span>
                                   </td>
                                   <td className="px-6 py-4">
-                                    <div className="flex flex-col text-xs">
-                                      <span className="text-slate-600">PP: {formatPKR(product.purchase_price)}</span>
-                                      <span className="text-indigo-600 font-medium">TP: {formatPKR(product.trade_price)}</span>
+                                    <div className="flex flex-col text-xs space-y-0.5">
+                                      <span className="text-slate-400 text-[10px]">PP: {formatPKR(product.purchase_price)}</span>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-slate-700 font-semibold">TP: {formatPKR(product.trade_price)}</span>
+                                        <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                          +{currentMargin}%
+                                        </span>
+                                      </div>
+                                      <span className="text-indigo-700 font-black">RP: {formatPKR(product.retail_price)}</span>
                                     </div>
                                   </td>
                                   <td className="px-6 py-4">
@@ -3719,13 +3750,29 @@ export default function App() {
                                     </span>
                                   </td>
                                   <td className="px-6 py-4 text-right">
-                                    <button
-                                      onClick={() => setSelectedProductForValuation(product)}
-                                      className="px-3 py-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
-                                      title="View MAP Valuation Audit History"
-                                    >
-                                      MAP History
-                                    </button>
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        onClick={() => {
+                                          setMarginProcessParams({
+                                            material_group_id: product.material_group_id,
+                                            product_id: product.product_id
+                                          });
+                                          setIsMarginProcessModalOpen(true);
+                                        }}
+                                        className="px-2.5 py-1.5 text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-100 flex items-center gap-1"
+                                        title="Run Margin & RP Process for this Product"
+                                      >
+                                        <Percent size={12} />
+                                        <span>Margin</span>
+                                      </button>
+                                      <button
+                                        onClick={() => setSelectedProductForValuation(product)}
+                                        className="px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                                        title="View MAP Valuation Audit History"
+                                      >
+                                        MAP
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -5389,6 +5436,19 @@ export default function App() {
             materialGroups={materialGroups}
             units={units}
             onClose={() => setIsProductMasterModalOpen(false)} 
+            onSuccess={() => {
+              fetchProducts();
+              fetchStats();
+            }}
+          />
+        )}
+        {isMarginProcessModalOpen && (
+          <ProductMarginProcessModal 
+            products={products}
+            materialGroups={materialGroups}
+            initialMaterialGroupId={marginProcessParams.material_group_id || 'all'}
+            initialProductId={marginProcessParams.product_id || 'all'}
+            onClose={() => setIsMarginProcessModalOpen(false)}
             onSuccess={() => {
               fetchProducts();
               fetchStats();

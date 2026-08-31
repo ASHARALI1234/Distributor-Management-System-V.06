@@ -86,6 +86,7 @@ export interface Product {
   material_group_name?: string;
   purchase_price: number; // PP
   trade_price: number;    // TP
+  profit_margin_percent?: number; // Profit Margin % (calculates RP = TP * (1 + margin / 100))
   retail_price: number;   // RP
   stock_quantity: number;
   inventory_value?: number;
