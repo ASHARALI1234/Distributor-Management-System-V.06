@@ -66,7 +66,7 @@ export function initAIInquiryTables(db: any) {
       insertRule.run(
         'bank|account|payment method|transfer|online|ibft|meezan|hbl',
         'PAYMENT_INFO',
-        'Official Payment Details for FBM Distributors:\n- Bank: Meezan Bank Ltd\n- Title: FBM DISTRIBUTORS\n- A/C #: 0102-0105849201\n- IBAN: PK45MEZN0001020105849201\n- Branch: F.B Industrial Area Branch Karachi\n*Please share the payment screenshot with Invoice Number for instant ledger credit.*'
+        'Official Payment Details for FM Distributors:\n- Bank: Meezan Bank Ltd\n- Title: FM DISTRIBUTORS\n- A/C #: 0102-0105849201\n- IBAN: PK45MEZN0001020105849201\n- Branch: F.B Industrial Area Branch Karachi\n*Please share the payment screenshot with Invoice Number for instant ledger credit.*'
       );
 
       insertRule.run(
@@ -465,7 +465,7 @@ function localRuleFallback(message: string, sender_type: string, db: any): Inqui
   if (lower.includes('bank') || lower.includes('account') || lower.includes('transfer') || lower.includes('ibft') || lower.includes('meezan') || lower.includes('hbl') || lower.includes('payment method')) {
     const policy = executeDMSTool('get_distributor_policy', { topic: 'bank' }, db);
     const text = policy.policies?.[0]?.quick_template || 
-      "Official Payment Account for FBM Distributors:\n- Bank: Meezan Bank Ltd\n- Title: FBM DISTRIBUTORS\n- A/C #: 0102-0105849201\n- IBAN: PK45MEZN0001020105849201\n- Branch: F.B Industrial Area Branch Karachi\n*Please share the payment deposit slip on WhatsApp for immediate ledger credit.*";
+      "Official Payment Account for FM Distributors:\n- Bank: Meezan Bank Ltd\n- Title: FM DISTRIBUTORS\n- A/C #: 0102-0105849201\n- IBAN: PK45MEZN0001020105849201\n- Branch: F.B Industrial Area Branch Karachi\n*Please share the payment deposit slip on WhatsApp for immediate ledger credit.*";
     return {
       response: text,
       detected_intent: 'PAYMENT_INFO',
@@ -606,7 +606,7 @@ function localRuleFallback(message: string, sender_type: string, db: any): Inqui
 
   // General fallback response
   return {
-    response: `Hello! I am the automated FMCG Inquiry Assistant for FBM Distributors Karachi.\n\nI can instantly help you with:\n1. 📊 *Shop Ledger & Outstanding Balance* (e.g. "What is my ledger balance for Hyper Link?")\n2. 📦 *Order Status & Tracking* (e.g. "Track order #ORD-0002")\n3. 🏷️ *Product Stock & Price List* (e.g. "Check price and stock of White Sugar 1kg")\n4. 🚚 *Delivery & Dispatch Details* (e.g. "When will delivery arrive?")\n5. 💳 *Bank Transfer Account Details* (e.g. "Send bank details for invoice payment")\n\nPlease let me know your question or shop name!`,
+    response: `Hello! I am the automated FMCG Inquiry Assistant for FM Distributors Karachi.\n\nI can instantly help you with:\n1. 📊 *Shop Ledger & Outstanding Balance* (e.g. "What is my ledger balance for Hyper Link?")\n2. 📦 *Order Status & Tracking* (e.g. "Track order #ORD-0002")\n3. 🏷️ *Product Stock & Price List* (e.g. "Check price and stock of White Sugar 1kg")\n4. 🚚 *Delivery & Dispatch Details* (e.g. "When will delivery arrive?")\n5. 💳 *Bank Transfer Account Details* (e.g. "Send bank details for invoice payment")\n\nPlease let me know your question or shop name!`,
     detected_intent: 'GENERAL_INQUIRY',
     tools_used: [],
     response_time_ms: Date.now() - startTime,
@@ -772,7 +772,7 @@ export async function processInquiry(req: InquiryRequest, db: any): Promise<Inqu
     };
 
     const systemInstruction = `
-You are the 24/7 Automated AI Inquiry Assistant & Virtual Dispatcher for "FBM DISTRIBUTORS", a premier FMCG Distribution Management System in Karachi, Pakistan.
+You are the 24/7 Automated AI Inquiry Assistant & Virtual Dispatcher for "FM DISTRIBUTORS", a premier FMCG Distribution Management System in Karachi, Pakistan.
 Your primary role is to answer routine customer (retailer) and field sales rep (order booker) inquiries immediately without requiring human intervention.
 
 Key Responsibilities:
