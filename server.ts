@@ -7,7 +7,7 @@ import morgan from "morgan";
 import Database from "better-sqlite3";
 import multer from "multer";
 import { fileURLToPath } from "url";
-import { initAIInquiryTables, processInquiry } from "./server/aiInquiry";
+import { initAIInquiryTables, processInquiry } from "./server/aiInquiry.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
